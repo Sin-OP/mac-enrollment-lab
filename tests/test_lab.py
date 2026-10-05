@@ -63,7 +63,7 @@ class LabTests(unittest.TestCase):
         return {str(p.relative_to(self.target)): (p.read_bytes(), p.stat().st_mode & 0o777)
                 for p in self.target.rglob("*") if p.is_file()}
 
-    def run_bash(self, body, *, transaction_cleanup=False):
+    def run_bash(self, body, *, transaction_cleanup=False, real_backup_validation=False):
         # Parse plist fixtures without requiring Apple's PlistBuddy on Linux.
         parser = (
             "import plistlib,sys; v=plistlib.load(open(sys.argv[1],'rb')); "
@@ -81,7 +81,6 @@ SCRATCH={shlex.quote(str(self.scratch))}
 ADMIN=labadmin
 VOLUME_UUID={UUID}
 plist_get() {{ {shlex.quote(sys.executable)} -c {shlex.quote(parser)} "$1" "$2" 2>/dev/null; }}
-validate_backup_parent() {{ return 0; }}
 disk_info() {{
     if [ "$1" = /System/Volumes/Data ]; then
         /bin/cat {shlex.quote(str(self.root / 'live-info.plist'))}
@@ -98,6 +97,8 @@ create_admin() {{
 }}
 build_paths
 """
+        if not real_backup_validation:
+            setup += "validate_backup_parent() { return 0; }\n"
         if transaction_cleanup:
             setup += "trap cleanup EXIT\n"
         return subprocess.run(
@@ -321,6 +322,59 @@ load_backup
         r = self.run_bash("acquire_lock && acquire_lock")
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("lock exists", r.stderr)
+
+    def test_failed_rollback_keeps_target_lock(self):
+        r = self.run_bash("""
+acquire_lock || exit 1
+write_markers() { return 1; }
+restore_snapshot() { return 1; }
+apply_transaction
+""", transaction_cleanup=True)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertTrue((self.target / "private/var/db/mac-enrollment-lab.lock").is_dir())
+        self.assertIn("ROLLBACK INCOMPLETE", r.stderr)
+
+    def test_successful_rollback_releases_lock(self):
+        r = self.run_bash("""
+acquire_lock || exit 1
+write_markers() { return 1; }
+apply_transaction
+""", transaction_cleanup=True)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertFalse((self.target / "private/var/db/mac-enrollment-lab.lock").exists())
+        self.assertEqual(self.capture(), self.before)
+
+    def test_checksum_fallback(self):
+        import hashlib
+        r = self.run_bash('hash_shasum() { return 127; }; digest "$TARGET/private/etc/hosts"')
+        self.assert_ok(r)
+        self.assertEqual(r.stdout.strip(), hashlib.sha256(self.hosts.read_bytes()).hexdigest())
+
+    def test_no_checksum_backend_prevents_mutations(self):
+        r = self.run_bash("""
+hash_shasum() { return 127; }
+hash_openssl() { return 127; }
+apply_transaction
+""", transaction_cleanup=True)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(self.capture(), self.before)
+        self.assertNotIn("Changes staged", r.stderr)
+
+    def test_backup_volume_requirements(self):
+        base = {
+            "FilesystemType": "apfs", "GlobalPermissionsEnabled": True,
+            "Writable": True, "MountPoint": "/Volumes/LABUSB",
+            "VolumeUUID": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        }
+        cases = [({}, True), ({"GlobalPermissionsEnabled": False}, False),
+                 ({"Writable": False}, False), ({"VolumeUUID": UUID}, False),
+                 ({"VolumeUUID": ""}, False), ({"MountPoint": "/"}, False),
+                 ({"FilesystemType": "exfat"}, False)]
+        for changes, expected in cases:
+            with self.subTest(changes=changes):
+                self.write_plist(self.root / "disk-info.plist", dict(base, **changes))
+                r = self.run_bash('validate_backup_parent "$SCRATCH"', real_backup_validation=True)
+                self.assertEqual(r.returncode == 0, expected, r.stderr)
 
 
 if __name__ == "__main__":

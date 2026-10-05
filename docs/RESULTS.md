@@ -15,4 +15,6 @@ The repository includes syntax checks and isolated fixture tests, also configure
 
 Local development validation, 2026-10-05: Bash 3.2 syntax check passed; all 30 isolated tests passed. No bypass operation was run against a real installation during development.
 
+Prerelease v0.1.1-rc1: Bash 3.2 syntax check passed; all 35 isolated tests passed locally, including checksum-backend failure, backup ownership enforcement, and retained locks after failed rollback. Hardware validation is still pending.
+
 Add exact commits, build numbers, trial stages and redacted results following [TESTING.md](TESTING.md). Do not replace “unverified” with “supported” on the basis of CI alone.

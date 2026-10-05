@@ -20,6 +20,8 @@ It does not rename volumes, disable SIP, alter the sealed system volume, install
 
 ## Get it onto the test device
 
+For the first trial, use [v0.1.1-rc1](https://github.com/Sin-OP/mac-enrollment-lab/releases/tag/v0.1.1-rc1). The [deployment guide](docs/DEPLOYMENT.md) includes direct download and checksum verification in Recovery Terminal, as well as USB transfer. Backup storage must have ownership enforcement enabled.
+
 Download a specific Git commit or release on another computer, inspect the script, and copy the repository to an APFS-formatted USB drive. Keep that drive connected for the test. Avoid executing a changing branch directly over the network.
 
 The commands below use `/Volumes/LABUSB/mac-enrollment-lab` as the repository location. Substitute your actual paths. Mount/unlock the target Data volume in Disk Utility first; this script does not guess, rename, or unlock it.
@@ -71,7 +73,7 @@ Restore verifies the target UUID, backup checksums, and that managed file conten
 
 After login, macOS can change account records and populate the home directory. Automated restore will then refuse instead of discarding those changes. For a disposable hardware test, use your lab's reimage procedure for a clean next trial.
 
-An ordinary command failure, Ctrl+C, HUP, or TERM during apply triggers rollback. **Power loss, SIGKILL, storage failure, and a failed rollback cannot be made transactional by a shell script.** Retain the backup, stay in Recovery, and inspect the snapshot before further changes. Interrupted snapshots are deliberately not accepted by the normal restore command.
+An ordinary command failure, Ctrl+C, HUP, or TERM during apply triggers rollback. **Power loss, SIGKILL, storage failure, and a failed rollback cannot be made transactional by a shell script.** Retain the backup, stay in Recovery, and inspect the snapshot before further changes. A failed rollback/restore retains the target lock to prevent an immediate retry. Interrupted snapshots are deliberately not accepted by the normal restore command.
 
 Backups contain private local configuration and account membership information. Keep them private; do not commit or attach them to a public issue.
 

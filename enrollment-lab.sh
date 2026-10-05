@@ -1,7 +1,7 @@
 #!/bin/bash
 # Original implementation. macOS ships Bash 3.2; do not use newer Bash features.
 
-VERSION=0.1.0
+VERSION=0.1.1-rc1
 TARGET=''
 BACKUP=''
 ADMIN=''
@@ -20,7 +20,20 @@ END_BLOCK='# END mac-enrollment-lab'
 log() { printf '%s\n' "$*" >&2; }
 fail() { log "ERROR: $*"; return 1; }
 plist_get() { /usr/libexec/PlistBuddy -c "Print :$2" "$1" 2>/dev/null; }
-digest() { /usr/bin/shasum -a 256 "$1" | /usr/bin/awk '{print $1}'; }
+hash_shasum() { /usr/bin/shasum -a 256 "$1"; }
+hash_openssl() { /usr/bin/openssl dgst -sha256 "$1"; }
+digest() {
+    local output value
+    if output=$(hash_shasum "$1" 2>/dev/null); then
+        value=${output%% *}
+        if [[ "$value" =~ ^[a-fA-F0-9]{64}$ ]]; then printf '%s\n' "$value"; return 0; fi
+    fi
+    if output=$(hash_openssl "$1" 2>/dev/null); then
+        value=${output##* }
+        if [[ "$value" =~ ^[a-fA-F0-9]{64}$ ]]; then printf '%s\n' "$value"; return 0; fi
+    fi
+    fail 'Cannot calculate SHA-256 with shasum or openssl; no checksum accepted.'
+}
 disk_info() { /usr/sbin/diskutil info -plist "$1"; }
 apfs_inventory() { /usr/sbin/diskutil apfs list -plist; }
 profiles_status() { /usr/bin/profiles status -type enrollment; }
@@ -62,6 +75,8 @@ cleanup() {
             log 'Managed files restored. No reboot was performed.'
         else
             log "ROLLBACK INCOMPLETE. Keep the device in Recovery. Backup: $BACKUP"
+            log "Target lock retained for inspection: $LOCK"
+            LOCK=''
         fi
         rc=1
     fi
@@ -214,14 +229,23 @@ validate_fresh_install() {
 }
 
 validate_backup_parent() {
-    local parent=$1 fs
+    local parent=$1 fs backup_uuid mount_point
     disk_info "$parent" > "$SCRATCH/backup-volume.plist" || return 1
     fs=$(plist_get "$SCRATCH/backup-volume.plist" FilesystemType) || return 1
     case "$fs" in apfs|hfs) ;; *) fail 'Backup storage must preserve Unix permissions (APFS/HFS).'; return 1 ;; esac
-    [ "$(plist_get "$SCRATCH/backup-volume.plist" MountPoint)" != / ] || {
+    [ "$(plist_get "$SCRATCH/backup-volume.plist" GlobalPermissionsEnabled)" = true ] || {
+        fail 'Backup volume ownership enforcement must be enabled. See docs/DEPLOYMENT.md.'; return 1;
+    }
+    [ "$(plist_get "$SCRATCH/backup-volume.plist" Writable)" = true ] || {
+        fail 'Backup volume must be writable.'; return 1;
+    }
+    mount_point=$(plist_get "$SCRATCH/backup-volume.plist" MountPoint) || return 1
+    [ -n "$mount_point" ] && [ "$mount_point" != / ] || {
         fail 'Backup cannot reside on the temporary Recovery boot filesystem.'; return 1;
     }
-    [ "$(plist_get "$SCRATCH/backup-volume.plist" VolumeUUID)" != "$VOLUME_UUID" ] || {
+    backup_uuid=$(plist_get "$SCRATCH/backup-volume.plist" VolumeUUID) || return 1
+    valid_uuid "$backup_uuid" || { fail 'Cannot verify backup volume identity.'; return 1; }
+    [ "$backup_uuid" != "$VOLUME_UUID" ] || {
         fail 'Use a different persistent volume for the backup.'; return 1;
     }
 }
@@ -491,7 +515,11 @@ main() {
             require_recovery || return 1
             acquire_lock || return 1
             load_backup || return 1
-            restore_snapshot || { fail 'Restore incomplete. Keep the device in Recovery and retain the backup.'; return 1; }
+            restore_snapshot || {
+                fail "Restore incomplete. Keep the device in Recovery; backup and lock retained: $BACKUP; $LOCK"
+                LOCK=''
+                return 1
+            }
             log 'Pre-change managed files restored. No reboot was performed.' ;;
     esac
 }

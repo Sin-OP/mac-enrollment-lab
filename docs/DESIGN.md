@@ -15,15 +15,16 @@ The source is one Bash 3.2-compatible file so Recovery does not need Python, Hom
 - Apple's documented `dscl -f ... localonly` node `/Local/Target` is used for offline Directory Services writes. That path, interactive password behavior, and account bootability still need device validation.
 - The hosts change is staged in the same directory and renamed into place. Existing contents and copied metadata are preserved.
 - The only domain entries are `deviceenrollment.apple.com`, `mdmenrollment.apple.com` and `iprofiles.apple.com`, with IPv4 and IPv6 entries. No entire IP ranges, update domains, activation domains, or vendor services are blocked.
-- A private, new backup directory is required on another persistent APFS/HFS volume. Paths in the snapshot are reconstructed from a fixed list and a validated account name; metadata is never executed.
+- A private, new backup directory is required on another persistent APFS/HFS volume with ownership enforcement enabled. Missing volume identity or writability metadata is refused. Paths in the snapshot are reconstructed from a fixed list and a validated account name; metadata is never executed.
 - Both the old file checksums and new file checksums are retained. Restore checks old-file integrity and new-file content drift before touching the target. Snapshot files are trusted local artifacts; checksums are corruption detection, not digital signatures.
 - An exclusive directory lock prevents concurrent runs of this tool on the target. It is not a general operating-system lock.
+- Checksums use macOS `shasum`, falling back to `openssl` if unavailable or unusable in Recovery. If neither produces a valid SHA-256 digest, backup preparation stops before target changes.
 
 ## Failure behavior
 
 Every intended mutation checks its return value. An apply failure after the completed snapshot invokes rollback from the EXIT trap. INT, HUP and TERM exit through that trap. There is no unconditional “bypass succeeded” banner; the strongest programmatic success claim is that local file checks passed.
 
-Rollback is best effort, not a filesystem transaction. It cannot recover automatically from power loss, SIGKILL or a failed underlying disk. A failure can leave a partial snapshot or a stale target lock. Preserve those artifacts and inspect them in Recovery. Never remove a lock while another instance could be running.
+Rollback is best effort, not a filesystem transaction. It cannot recover automatically from power loss, SIGKILL or a failed underlying disk. A failure can leave a partial snapshot or a stale target lock. Failed rollback or restore deliberately retains the lock. Preserve those artifacts and inspect them in Recovery. Never remove a lock while another instance could be running.
 
 Restore is intentionally limited to an unchanged target and an empty newly created account home. It is useful before first reboot, or following an ordinary failed apply. It is not a migration/uninstallation system for an account already in use.
 
