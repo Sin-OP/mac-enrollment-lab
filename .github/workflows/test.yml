@@ -21,7 +21,9 @@ jobs:
           /bin/bash -n launcher.sh
           /bin/bash -n docs/go
       - name: Run isolated fixture tests
-        run: python3 -m unittest discover -s tests -v
+        run: |
+          python3 scripts/bundle.py --check
+          python3 -m unittest discover -s tests -v
       - name: Check public CLI
         run: |
           /bin/bash enrollment-lab.sh --help

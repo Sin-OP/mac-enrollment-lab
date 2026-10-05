@@ -19,6 +19,7 @@ class LauncherTests(unittest.TestCase):
 
     def test_published_launcher_matches_source(self):
         self.assertEqual((ROOT / 'launcher.sh').read_bytes(), (ROOT / 'docs/go').read_bytes())
+        self.assertEqual((ROOT / 'launcher.sh').read_bytes(), (ROOT / 'docs/go2').read_bytes())
 
     def test_core_pin_matches_reviewed_script(self):
         r = self.run_shell('printf "%s" "$CORE_SHA"')
@@ -63,6 +64,26 @@ class LauncherTests(unittest.TestCase):
                                'fetch_core() { return 0; }; download_verified_core')
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertNotIn('SHOULD_NOT_EXECUTE', r.stdout)
+
+    def test_recovery_without_openssl_or_shasum(self):
+        r = self.run_shell(f'CORE={shlex.quote(str(ROOT / "enrollment-lab.sh"))}; '
+                           'fetch_core() { return 0; }; '
+                           'launcher_openssl() { return 127; }; '
+                           'launcher_shasum() { return 127; }; download_verified_core')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('Using built-in Bash SHA-256', r.stderr)
+        self.assertIn('Checksum verified', r.stderr)
+
+    def test_corrupt_download_rejected_with_bash_fallback(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / 'bad-core'
+            p.write_text('corrupt download')
+            r = self.run_shell(f'CORE={shlex.quote(str(p))}; '
+                               'fetch_core() { return 0; }; '
+                               'launcher_openssl() { return 127; }; '
+                               'launcher_shasum() { return 127; }; download_verified_core')
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn('Checksum mismatch', r.stderr)
 
     def test_apply_requires_explicit_confirmation(self):
         body = '''

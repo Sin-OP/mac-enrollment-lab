@@ -354,11 +354,21 @@ apply_transaction
         r = self.run_bash("""
 hash_shasum() { return 127; }
 hash_openssl() { return 127; }
+sha256_bash() { return 1; }
 apply_transaction
 """, transaction_cleanup=True)
         self.assertNotEqual(r.returncode, 0)
         self.assertEqual(self.capture(), self.before)
         self.assertNotIn("Changes staged", r.stderr)
+
+    def test_apply_and_restore_without_openssl_or_shasum(self):
+        r = self.run_bash("""
+hash_shasum() { return 127; }
+hash_openssl() { return 127; }
+validate_fresh_install && apply_transaction && load_backup && restore_snapshot
+""")
+        self.assert_ok(r)
+        self.assertEqual(self.capture(), self.before)
 
     def test_backup_volume_requirements(self):
         base = {

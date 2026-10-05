@@ -1,11 +1,11 @@
 # Deploy the first hardware test
 
-Use prerelease **v0.1.1-rc1** for the first trial. It is a fixed test version, not a compatibility certification. Download it in **Recovery → Utilities → Terminal**, or copy the same release from a preparation computer onto an APFS USB drive.
+Use prerelease **v0.1.2-rc1** for the first trial. It is a fixed test version, not a compatibility certification. Download it in **Recovery → Utilities → Terminal**, or copy the same release from a preparation computer onto an APFS USB drive.
 
 ## Short command for manual typing
 
 ```bash
-curl -fL https://sin-op.github.io/mac-enrollment-lab/go -o /tmp/lab &&
+curl -fL https://sin-op.github.io/mac-enrollment-lab/go2 -o /tmp/lab &&
 bash /tmp/lab
 ```
 
@@ -13,19 +13,19 @@ The `&&` prevents launching if the download fails. Enter the second line when Te
 
 Use option 3 for immediate rollback while the new account home is empty. A failed core operation is reported as a failure, and all core preflight checks remain in effect. Backup volumes must be mounted APFS/HFS volumes with ownership enabled. If no appropriate volume appears, mount it first in Disk Utility.
 
-The HTTPS launcher is a small bootstrap served from `docs/go` using GitHub Pages. It pins the core release and checksum. Its own trust comes from HTTPS and this GitHub account, not an independently verified launcher signature. The longer method below also remains available.
+The HTTPS launcher is a small bootstrap served from `docs/go2` (also mirrored at `docs/go`) using GitHub Pages. It pins the core release and checksum. Its own trust comes from HTTPS and this GitHub account, not an independently verified launcher signature. The longer method below also remains available.
 
-## Download directly in Recovery Terminal
+## Optional manual download when a checksum utility is available
 
 Recovery must have an internet connection for the download. The tool itself needs no network connection to execute. Keep the device connected for the later behavioral test as described in TESTING.md.
 
-Run this block to download and verify the script, then list volumes. It does not apply the experiment:
+Some Recovery builds have neither OpenSSL nor shasum. Use the short `go2` command above in that environment; it includes a Bash-only SHA-256 fallback. The longer block below is only for environments where at least one checksum utility is available. It downloads and verifies the script, then lists volumes.
 
 ```bash
 lab_dir=$(mktemp -d /tmp/enrollment-lab.XXXXXXXX) &&
 cd "$lab_dir" &&
-curl -fL https://github.com/Sin-OP/mac-enrollment-lab/releases/download/v0.1.1-rc1/enrollment-lab.sh -o enrollment-lab.sh &&
-curl -fL https://github.com/Sin-OP/mac-enrollment-lab/releases/download/v0.1.1-rc1/enrollment-lab.sh.sha256 -o enrollment-lab.sh.sha256 &&
+curl -fL https://github.com/Sin-OP/mac-enrollment-lab/releases/download/v0.1.2-rc1/enrollment-lab.sh -o enrollment-lab.sh &&
+curl -fL https://github.com/Sin-OP/mac-enrollment-lab/releases/download/v0.1.2-rc1/enrollment-lab.sh.sha256 -o enrollment-lab.sh.sha256 &&
 (
   expected=$(awk '{print $1}' enrollment-lab.sh.sha256)
   actual=$(openssl dgst -sha256 enrollment-lab.sh 2>/dev/null | awk '{print $NF}')

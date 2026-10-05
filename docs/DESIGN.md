@@ -18,7 +18,7 @@ The source is one Bash 3.2-compatible file so Recovery does not need Python, Hom
 - A private, new backup directory is required on another persistent APFS/HFS volume with ownership enforcement enabled. Missing volume identity or writability metadata is refused. Paths in the snapshot are reconstructed from a fixed list and a validated account name; metadata is never executed.
 - Both the old file checksums and new file checksums are retained. Restore checks old-file integrity and new-file content drift before touching the target. Snapshot files are trusted local artifacts; checksums are corruption detection, not digital signatures.
 - An exclusive directory lock prevents concurrent runs of this tool on the target. It is not a general operating-system lock.
-- Checksums use macOS `shasum`, falling back to `openssl` if unavailable or unusable in Recovery. If neither produces a valid SHA-256 digest, backup preparation stops before target changes.
+- Checksums prefer `shasum`/`openssl` when available. Recovery environments without both use the embedded Bash 3.2 SHA-256 implementation. It hashes bytes, including NULs and high-bit bytes, using only shell builtins. If no method produces a digest, backup preparation stops before target changes. Digest mismatches remain failures.
 
 ## Failure behavior
 
@@ -29,6 +29,10 @@ Rollback is best effort, not a filesystem transaction. It cannot recover automat
 Restore is intentionally limited to an unchanged target and an empty newly created account home. It is useful before first reboot, or following an ordinary failed apply. It is not a migration/uninstallation system for an account already in use.
 
 ## Tests versus device evidence
+
+The checksum fallback implements the unkeyed SHA-256 algorithm described in [FIPS 180-4](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.180-4.pdf). It is not a signature or a NIST-validated cryptographic module. Tests compare known answers, 137 deterministic binary lengths around block/padding boundaries, all byte values, UTF-8, and both delivered scripts against Python hashlib. The fallback's subprocess PATH contains no external programs. Fixture apply/restore and launcher verification also run with the OpenSSL/shasum boundaries disabled.
+
+`lib/sha256.sh` is the maintained source. Run `python3 scripts/bundle.py` after changes to embed it into both standalone scripts, pin the updated core checksum/version, and refresh the Pages copies. CI checks that these generated sections are synchronized. No Python is needed at runtime on the device.
 
 Fixtures exercise target-role/identity rejection, UID collisions and exhaustion, path quoting and symlink guards, backup integrity, rollback, drift refusal, status-query errors, and preservation of hidden marker files. The tests replace only the platform boundaries inside the test process.
 
