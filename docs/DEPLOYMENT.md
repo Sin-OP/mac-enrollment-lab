@@ -2,6 +2,19 @@
 
 Use prerelease **v0.1.1-rc1** for the first trial. It is a fixed test version, not a compatibility certification. Download it in **Recovery → Utilities → Terminal**, or copy the same release from a preparation computer onto an APFS USB drive.
 
+## Short command for manual typing
+
+```bash
+curl -fL https://sin-op.github.io/mac-enrollment-lab/go -o /tmp/lab &&
+bash /tmp/lab
+```
+
+The `&&` prevents launching if the download fails. Enter the second line when Terminal asks for the continuation. The launcher verifies the pinned core's SHA-256, provides a numbered menu, and offers numbered selections for mounted volumes. Option 1 runs the plan before asking for the exact confirmation `APPLY`. A blank account name defaults to `labadmin`; passwords still have no default.
+
+Use option 3 for immediate rollback while the new account home is empty. A failed core operation is reported as a failure, and all core preflight checks remain in effect. Backup volumes must be mounted APFS/HFS volumes with ownership enabled. If no appropriate volume appears, mount it first in Disk Utility.
+
+The HTTPS launcher is a small bootstrap served from `docs/go` using GitHub Pages. It pins the core release and checksum. Its own trust comes from HTTPS and this GitHub account, not an independently verified launcher signature. The longer method below also remains available.
+
 ## Download directly in Recovery Terminal
 
 Recovery must have an internet connection for the download. The tool itself needs no network connection to execute. Keep the device connected for the later behavioral test as described in TESTING.md.
