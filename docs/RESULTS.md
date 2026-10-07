@@ -29,4 +29,6 @@ Prerelease v0.1.3-rc1: 66 isolated tests passed locally (65-test suite plus the 
 
 Prerelease v0.1.4-rc1: all 75 isolated tests passed locally, including XML/binary preferences, strict schema rejection, populated/unknown store rejection, and preservation of every store file through fixture apply and restore.
 
+Recovery feedback, 2026-10-07, follow-up: the filename was misread in the earlier photo as a ten-hex-character marker. The clearer listing shows `.fl8FC95EC6` with a lowercase L. v0.1.4-rc1 therefore rejected the unchanged store during the read-only preview. v0.1.5-rc1 corrects the prefix to `.fl` plus eight hexadecimal characters and includes the rejected filename in errors. No hardware apply has succeeded yet.
+
 Add exact commits, build numbers, trial stages and redacted results following [TESTING.md](TESTING.md). Do not replace “unverified” with “supported” on the basis of CI alone.

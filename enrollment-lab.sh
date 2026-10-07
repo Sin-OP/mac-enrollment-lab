@@ -1,7 +1,7 @@
 #!/bin/bash
 # Original implementation. macOS ships Bash 3.2; do not use newer Bash features.
 
-VERSION=0.1.4-rc1
+VERSION=0.1.5-rc1
 TARGET=''
 BACKUP=''
 ADMIN=''
@@ -299,7 +299,7 @@ hash_only_preferences() {
 }
 
 validate_profile_store() {
-    local store="$TARGET/private/var/db/ConfigurationProfiles/Store" entry name count=0 markers=0
+    local store="$TARGET/private/var/db/ConfigurationProfiles/Store" entry name quoted_name count=0 markers=0
     [ ! -L "$store" ] || { fail 'Profile store symlink refused.'; return 1; }
     [ -e "$store" ] || return 0
     [ -d "$store" ] || { fail 'Profile store is not a directory.'; return 1; }
@@ -316,8 +316,9 @@ validate_profile_store() {
             MDM_ComputerPrefs.plist)
                 hash_only_preferences "$entry" || { fail 'Unrecognized profile preferences; enrollment status unknown.'; return 1; } ;;
             *)
-                [[ "$name" =~ ^\.[a-fA-F0-9]{10}$ ]] && [ ! -s "$entry" ] || {
-                    fail 'Unexpected profile-store file; enrollment status unknown.'; return 1;
+                [[ "$name" =~ ^\.fl[a-fA-F0-9]{8}$ ]] && [ ! -s "$entry" ] || {
+                    printf -v quoted_name '%q' "$name"
+                    fail "Unexpected profile-store file: $quoted_name; enrollment status unknown."; return 1;
                 }
                 markers=$((markers + 1)) ;;
         esac

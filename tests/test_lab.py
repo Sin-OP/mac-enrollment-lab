@@ -242,7 +242,7 @@ load_backup
     def make_observed_profile_store(self):
         store = self.settings.parent / 'Store'
         store.mkdir(exist_ok=True)
-        for name in ['.f18FC95EC6', 'ConfigProfiles.binary', 'Provisioning.binary']:
+        for name in ['.fl8FC95EC6', 'ConfigProfiles.binary', 'Provisioning.binary']:
             (store / name).write_bytes(b'')
         (store / 'MCXPrivate.keychain').write_bytes(b'opaque fixture keychain')
         self.write_plist(store / 'MDM_ComputerPrefs.plist', {'MDMServerHash': bytes(range(32))})
@@ -293,7 +293,28 @@ load_backup
     def test_unexpected_hidden_profile_file_rejected(self):
         store = self.make_observed_profile_store()
         (store / '.unexpected').write_bytes(b'')
-        self.assertNotEqual(self.run_bash('validate_profile_store').returncode, 0)
+        r = self.run_bash('validate_profile_store')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('Unexpected profile-store file: .unexpected;', r.stderr)
+
+    def test_marker_prefix_is_literal_lowercase_fl(self):
+        store = self.make_observed_profile_store()
+        marker = store / '.fl8FC95EC6'
+        for name in ['.f18FC95EC6', '.FL8FC95EC6', '.fl8FC95EC', '.fl8FC95EC67',
+                     '.fl8FC95ECG', 'xfl8FC95EC6']:
+            with self.subTest(name=name):
+                marker.rename(store / name)
+                r = self.run_bash('validate_profile_store')
+                self.assertNotEqual(r.returncode, 0)
+                self.assertIn(name, r.stderr)
+                (store / name).rename(marker)
+
+    def test_nonempty_fl_marker_rejected(self):
+        store = self.make_observed_profile_store()
+        (store / '.fl8FC95EC6').write_bytes(b'not empty')
+        r = self.run_bash('validate_profile_store')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('.fl8FC95EC6', r.stderr)
 
     def test_profile_store_symlink_entry_rejected(self):
         store = self.make_observed_profile_store()
@@ -313,7 +334,7 @@ load_backup
 
     def test_multiple_store_markers_rejected(self):
         store = self.make_observed_profile_store()
-        (store / '.0123456789').write_bytes(b'')
+        (store / '.fl01234567').write_bytes(b'')
         self.assertNotEqual(self.run_bash('validate_profile_store').returncode, 0)
 
     def test_uid_collision_is_skipped_without_logs_in_value(self):

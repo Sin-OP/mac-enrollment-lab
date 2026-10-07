@@ -1,8 +1,8 @@
 #!/bin/bash
 # Interactive download launcher. The core release and checksum are fixed.
-CORE_VERSION=0.1.4-rc1
-CORE_URL=https://github.com/Sin-OP/mac-enrollment-lab/releases/download/v0.1.4-rc1/enrollment-lab.sh
-CORE_SHA=43548262fa606b82e65b4f34f18ca266fdaf212a44e2f1ce541511a854e18785
+CORE_VERSION=0.1.5-rc1
+CORE_URL=https://github.com/Sin-OP/mac-enrollment-lab/releases/download/v0.1.5-rc1/enrollment-lab.sh
+CORE_SHA=8daa091ad7c1c7cc96d3e31291a5fb2975bb7e095d5317d32c4fa0d57ab7b9da
 LAB_TMP=''
 CORE=''
 CHOICES=()
