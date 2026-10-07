@@ -42,7 +42,7 @@ class LabTests(unittest.TestCase):
             "FilesystemType": "apfs", "Writable": True,
         }
         self.write_plist(self.root / "disk-info.plist", self.volume_info)
-        self.write_plist(self.root / "live-info.plist", {"VolumeUUID": "other-live-volume"})
+        self.write_plist(self.root / "live-info.plist", {"VolumeUUID": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"})
         self.inventory = {"Containers": [{"ContainerReference": "disk9", "Volumes": [
             {"DeviceIdentifier": "disk9s1", "Roles": ["Data"]},
             {"DeviceIdentifier": "disk9s2", "Roles": ["System"]},
@@ -301,6 +301,66 @@ load_backup
         r = self.run_bash("validate_target")
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("running system", r.stderr)
+
+    def recovery_live_check(self, row, recovery=True):
+        return self.run_bash(f'''
+disk_info() {{ return 1; }}
+require_recovery() {{ return {0 if recovery else 1}; }}
+live_data_filesystem() {{ printf '%s\\n' {shlex.quote(row)}; }}
+validate_live_data
+''')
+
+    def test_recovery_tmpfs_is_recognized_after_diskutil_failure(self):
+        r = self.recovery_live_check('Filesystem 1024-blocks Used Available Capacity Mounted on\n'
+                                     'tmpfs 2621440 172032 2449408 7% /System/Volumes/Data')
+        self.assert_ok(r)
+        self.assertIn('Recognized Recovery', r.stderr)
+        self.assertEqual(r.stdout, '')
+        self.assertEqual(self.capture(), self.before)
+
+    def test_full_preview_continues_past_recovery_tmpfs(self):
+        r = self.run_bash(f'''
+disk_info() {{
+    [ "$1" != /System/Volumes/Data ] || return 1
+    /bin/cat {shlex.quote(str(self.root / 'disk-info.plist'))}
+}}
+require_recovery() {{ return 0; }}
+live_data_filesystem() {{ printf '%s\\n' 'tmpfs 2621440 172032 2449408 7% /System/Volumes/Data'; }}
+main plan --data-volume "$TARGET" --create-admin "$ADMIN"
+''')
+        self.assert_ok(r)
+        self.assertIn('Plan: create admin', r.stderr)
+        self.assertEqual(self.capture(), self.before)
+
+    def test_tmpfs_exception_requires_recovery(self):
+        r = self.recovery_live_check('tmpfs 10 1 9 10% /System/Volumes/Data', recovery=False)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('outside verified Recovery', r.stderr)
+
+    def test_unknown_live_filesystem_is_rejected(self):
+        for source in ['/dev/disk1s1', 'apfs', 'ramdisk', '']:
+            with self.subTest(source=source):
+                r = self.recovery_live_check(f'{source} 10 1 9 10% /System/Volumes/Data')
+                self.assertNotEqual(r.returncode, 0)
+                self.assertIn('Unrecognized', r.stderr)
+
+    def test_tmpfs_must_be_mounted_at_exact_live_data_path(self):
+        r = self.recovery_live_check('tmpfs 10 1 9 10% /tmp')
+        self.assertNotEqual(r.returncode, 0)
+
+    def test_failed_recovery_filesystem_query_is_reported(self):
+        r = self.run_bash('disk_info() { return 1; }; require_recovery() { return 0; }; '
+                          'live_data_filesystem() { return 1; }; validate_live_data')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('Cannot inspect', r.stderr)
+
+    def test_missing_live_uuid_is_reported_not_treated_as_tmpfs(self):
+        self.write_plist(self.root / 'live-info.plist', {})
+        r = self.run_bash('require_recovery() { return 0; }; '
+                          'live_data_filesystem() { echo "tmpfs 10 1 9 10% /System/Volumes/Data"; }; '
+                          'validate_live_data')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('Cannot read the running Data volume UUID', r.stderr)
 
     def test_status_error_is_unknown_not_unenrolled(self):
         r = self.run_bash("profiles_status() { printf 'permission denied'; return 7; }; running_status")

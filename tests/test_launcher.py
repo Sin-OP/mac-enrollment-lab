@@ -20,6 +20,7 @@ class LauncherTests(unittest.TestCase):
     def test_published_launcher_matches_source(self):
         self.assertEqual((ROOT / 'launcher.sh').read_bytes(), (ROOT / 'docs/go').read_bytes())
         self.assertEqual((ROOT / 'launcher.sh').read_bytes(), (ROOT / 'docs/go2').read_bytes())
+        self.assertEqual((ROOT / 'launcher.sh').read_bytes(), (ROOT / 'docs/go3').read_bytes())
 
     def test_core_pin_matches_reviewed_script(self):
         r = self.run_shell('printf "%s" "$CORE_SHA"')

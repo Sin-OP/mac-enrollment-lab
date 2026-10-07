@@ -33,7 +33,8 @@ def main():
     launcher = re.sub(r'^CORE_SHA=.*$', 'CORE_SHA=' + checksum, launcher, flags=re.M)
     diagnostic = launcher.split('\nrun_core() {', 1)[0] + '\n' + (ROOT / 'diagnostic.sh').read_text()
     for relative, data in [('enrollment-lab.sh', core), ('launcher.sh', launcher),
-                           ('docs/go', launcher), ('docs/go2', launcher), ('docs/check', diagnostic)]:
+                           ('docs/go', launcher), ('docs/go2', launcher), ('docs/go3', launcher),
+                           ('docs/check', diagnostic)]:
         path = ROOT / relative
         if args.check:
             if path.read_text() != data:

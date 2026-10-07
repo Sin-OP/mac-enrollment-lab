@@ -9,7 +9,7 @@ The source is one Bash 3.2-compatible file so Recovery does not need Python, Hom
 ## Boundaries
 
 - `diskutil ... -plist` and PlistBuddy supply structured disk metadata. Volume names are not used to infer APFS roles. The caller explicitly supplies the mount point.
-- The live Data-volume UUID is rejected. Mutations also require root and a recognized Recovery boot-volume name. An unfamiliar Recovery environment is refused.
+- The live Data-volume UUID is rejected. Mutations also require root and a recognized Recovery boot-volume name. An unfamiliar Recovery environment is refused. If diskutil cannot inspect `/System/Volumes/Data`, the guard allows only a recognized Recovery boot with `df -Pk` confirming `tmpfs` mounted at that exact path. Other lookup failures remain fatal and now report a reason. The target itself still needs a writable APFS Data role and a valid UUID.
 - All changed paths live beneath the selected Data volume. Each path component is checked for symlinks. Volume renaming and System/Data pairing are unnecessary because there are no System-volume writes.
 - Account names are narrowly validated; existing account paths and home directories are refused. Existing UID records must be readable. Exhausting the bounded UID pool is a hard failure.
 - Apple's documented `dscl -f ... localonly` node `/Local/Target` is used for offline Directory Services writes. That path, interactive password behavior, and account bootability still need device validation.

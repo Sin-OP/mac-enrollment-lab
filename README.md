@@ -23,13 +23,13 @@ It does not rename volumes, disable SIP, alter the sealed system volume, install
 For manual typing in **Recovery Terminal**, use the guided launcher:
 
 ```bash
-curl -fL https://sin-op.github.io/mac-enrollment-lab/go2 -o /tmp/lab &&
+curl -fL https://sin-op.github.io/mac-enrollment-lab/go3 -o /tmp/lab &&
 bash /tmp/lab
 ```
 
-Recovery builds without `openssl` or `shasum` use an embedded Bash-only SHA-256 fallback. The launcher downloads and verifies the pinned `v0.1.2-rc1` core, then presents numbered volume selections. Choose option 1 to preview the experiment. It requests `APPLY` before changes; options 2 and 3 verify or restore. An appropriate separate backup volume is still required. The HTTPS launcher is served from this repository's GitHub Pages site; its embedded checksum pins the core, not the launcher itself.
+Recovery builds without `openssl` or `shasum` use an embedded Bash-only SHA-256 fallback. The launcher downloads and verifies the pinned `v0.1.3-rc1` core, then presents numbered volume selections. Choose option 1 to preview the experiment. It requests `APPLY` before changes; options 2 and 3 verify or restore. An appropriate separate backup volume is still required. The HTTPS launcher is served from this repository's GitHub Pages site; its embedded checksum pins the core, not the launcher itself.
 
-For the first trial, use [v0.1.2-rc1](https://github.com/Sin-OP/mac-enrollment-lab/releases/tag/v0.1.2-rc1). The [deployment guide](docs/DEPLOYMENT.md) includes direct download and checksum verification in Recovery Terminal, as well as USB transfer. Backup storage must have ownership enforcement enabled.
+For the first trial, use [v0.1.3-rc1](https://github.com/Sin-OP/mac-enrollment-lab/releases/tag/v0.1.3-rc1). The [deployment guide](docs/DEPLOYMENT.md) includes direct download and checksum verification in Recovery Terminal, as well as USB transfer. Backup storage must have ownership enforcement enabled.
 
 Download a specific Git commit or release on another computer, inspect the script, and copy the repository to an APFS-formatted USB drive. Keep that drive connected for the test. Avoid executing a changing branch directly over the network.
 

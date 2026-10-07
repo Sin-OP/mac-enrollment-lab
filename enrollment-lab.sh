@@ -1,7 +1,7 @@
 #!/bin/bash
 # Original implementation. macOS ships Bash 3.2; do not use newer Bash features.
 
-VERSION=0.1.2-rc1
+VERSION=0.1.3-rc1
 TARGET=''
 BACKUP=''
 ADMIN=''
@@ -114,6 +114,7 @@ digest() {
 }
 disk_info() { /usr/sbin/diskutil info -plist "$1"; }
 apfs_inventory() { /usr/sbin/diskutil apfs list -plist; }
+live_data_filesystem() { LC_ALL=C /bin/df -Pk /System/Volumes/Data; }
 profiles_status() { /usr/bin/profiles status -type enrollment; }
 valid_name() { [[ "$1" =~ ^[a-z][a-z0-9_]{0,30}$ ]] && [ "$1" != root ]; }
 valid_uuid() { [[ "$1" =~ ^[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}$ ]]; }
@@ -179,6 +180,30 @@ require_recovery() {
 
 canonical_dir() { (cd -P "$1" 2>/dev/null && pwd -P); }
 
+# Recovery can mount tmpfs here. diskutil cannot describe that RAM filesystem.
+# Accept that specific case only after both Recovery and tmpfs are verified.
+validate_live_data() {
+    local live_uuid output filesystem size used available capacity mountpoint
+    if disk_info /System/Volumes/Data > "$SCRATCH/live.plist"; then
+        live_uuid=$(plist_get "$SCRATCH/live.plist" VolumeUUID) || {
+            fail 'Cannot read the running Data volume UUID.'; return 1;
+        }
+        valid_uuid "$live_uuid" || { fail 'Invalid running Data volume UUID.'; return 1; }
+        [ "$live_uuid" != "$VOLUME_UUID" ] || { fail 'Refusing the running system Data volume.'; return 1; }
+        return 0
+    fi
+    require_recovery || { fail 'Cannot identify the running Data filesystem outside verified Recovery.'; return 1; }
+    output=$(live_data_filesystem) || { fail 'Cannot inspect the Recovery Data filesystem.'; return 1; }
+    while read -r filesystem size used available capacity mountpoint; do
+        if [ "$filesystem" = tmpfs ] && [ "$mountpoint" = /System/Volumes/Data ]; then
+            log 'Recognized Recovery temporary Data filesystem (tmpfs).'
+            return 0
+        fi
+    done <<< "$output"
+    fail 'Unrecognized running Data filesystem; expected verified Recovery tmpfs.'
+    return 1
+}
+
 # Reject symlinks in every component, not only the leaf. No path is evaluated.
 safe_path() {
     local rel=$1 part cursor=$TARGET remaining=$1
@@ -213,10 +238,7 @@ validate_target() {
 
     # Never accept the running system's Data volume, even through another mount path.
     if [ -d /System/Volumes/Data ]; then
-        disk_info /System/Volumes/Data > "$SCRATCH/live.plist" || return 1
-        local live_uuid
-        live_uuid=$(plist_get "$SCRATCH/live.plist" VolumeUUID) || return 1
-        [ "$live_uuid" != "$VOLUME_UUID" ] || { fail 'Refusing the running system Data volume.'; return 1; }
+        validate_live_data || return 1
     fi
 
     apfs_inventory > "$SCRATCH/apfs.plist" || return 1
