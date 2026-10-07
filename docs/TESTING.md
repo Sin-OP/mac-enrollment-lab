@@ -1,6 +1,6 @@
 # Hardware test protocol
 
-No hardware success is currently recorded. The first intended test is macOS 14.4 at Remote Management, before enrollment. Record the exact Mac model/chip and OS build when available.
+The first desktop login and two subsequent restart checks are recorded for one Mac15,11 running macOS 14.8.9 (23J631). The originally reported 14.4 installation was erased and reinstalled before this trial. See [RESULTS.md](RESULTS.md) for the evidence and remaining gaps, and [UPDATE-VALIDATION.md](UPDATE-VALIDATION.md) before testing an update.
 
 ## Baseline and preparation
 

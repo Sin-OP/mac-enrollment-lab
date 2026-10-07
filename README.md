@@ -1,6 +1,6 @@
 # mac-enrollment-lab
 
-An original, experimental Bash tool for testing local enrollment suppression on a **fresh macOS installation paused at Remote Management**. The initial hardware target is **macOS Sonoma 14.4**. No successful hardware run has been recorded yet.
+An original, experimental Bash tool for testing local enrollment suppression on a **fresh macOS installation paused at Remote Management**. One Apple silicon test Mac running **macOS Sonoma 14.8.9 (23J631)** reached the desktop; two subsequent restarts retained the tracked files and reported no current DEP/MDM enrollment. Updates, extended online observation, and organizational release remain unverified. See [hardware results](docs/RESULTS.md) and [update validation](docs/UPDATE-VALIDATION.md).
 
 This is an enrollment-suppression experiment, not a release from Apple Business/School Manager, an Activation Lock unlocker, or a tool for removing an already-installed MDM profile. Use on devices you own or are authorized to test.
 
