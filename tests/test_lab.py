@@ -215,7 +215,7 @@ load_backup
         (self.target / "private/var/db/.AppleSetupDone").touch()
         r = self.run_bash("validate_fresh_install")
         self.assertNotEqual(r.returncode, 0)
-        self.assertIn("already complete", r.stderr)
+        self.assertIn("Setup-completion marker exists", r.stderr)
 
     def test_account_alias_collision_rejected(self):
         self.write_plist(self.node / "users/different.plist", {
@@ -237,7 +237,84 @@ load_backup
         (store / "profile").write_text("fixture")
         r = self.run_bash("validate_fresh_install")
         self.assertNotEqual(r.returncode, 0)
-        self.assertIn("Profile store", r.stderr)
+        self.assertIn("Unexpected profile-store file", r.stderr)
+
+    def make_observed_profile_store(self):
+        store = self.settings.parent / 'Store'
+        store.mkdir(exist_ok=True)
+        for name in ['.f18FC95EC6', 'ConfigProfiles.binary', 'Provisioning.binary']:
+            (store / name).write_bytes(b'')
+        (store / 'MCXPrivate.keychain').write_bytes(b'opaque fixture keychain')
+        self.write_plist(store / 'MDM_ComputerPrefs.plist', {'MDMServerHash': bytes(range(32))})
+        return store
+
+    def test_observed_store_accepted_with_unknown_enrollment_status(self):
+        store = self.make_observed_profile_store()
+        for fmt in [plistlib.FMT_XML, plistlib.FMT_BINARY]:
+            with self.subTest(fmt=fmt):
+                (store / 'MDM_ComputerPrefs.plist').write_bytes(
+                    plistlib.dumps({'MDMServerHash': bytes(range(32))}, fmt=fmt))
+                snapshot = self.capture()
+                r = self.run_bash('validate_fresh_install')
+                self.assert_ok(r)
+                self.assertIn('Enrollment status remains UNKNOWN', r.stderr)
+                self.assertEqual(self.capture(), snapshot)
+
+    def test_observed_store_preserved_by_apply_and_restore(self):
+        store = self.make_observed_profile_store()
+        snapshot = self.capture()
+        r = self.run_bash('validate_fresh_install && apply_transaction && load_backup && restore_snapshot')
+        self.assert_ok(r)
+        self.assertEqual(self.capture(), snapshot)
+
+    def test_populated_profile_databases_rejected(self):
+        store = self.make_observed_profile_store()
+        for name in ['ConfigProfiles.binary', 'Provisioning.binary']:
+            with self.subTest(name=name):
+                (store / name).write_bytes(b'profile payload')
+                r = self.run_bash('validate_profile_store')
+                self.assertNotEqual(r.returncode, 0)
+                self.assertIn('Nonempty profile database', r.stderr)
+                (store / name).write_bytes(b'')
+
+    def test_profile_preferences_schema_is_strict(self):
+        store = self.make_observed_profile_store()
+        for value in [
+            {}, {'MDMServerHash': b''}, {'MDMServerHash': 'text'},
+            {'MDMServerHash': b'hash', 'Other': True}, {'MDM ServerHash': b'hash'},
+            {'MDMServerHash': {'nested': b'hash'}}, {'MDMServerHash': [b'hash']},
+        ]:
+            with self.subTest(value=value):
+                self.write_plist(store / 'MDM_ComputerPrefs.plist', value)
+                r = self.run_bash('validate_profile_store')
+                self.assertNotEqual(r.returncode, 0)
+                self.assertIn('Unrecognized profile preferences', r.stderr)
+
+    def test_unexpected_hidden_profile_file_rejected(self):
+        store = self.make_observed_profile_store()
+        (store / '.unexpected').write_bytes(b'')
+        self.assertNotEqual(self.run_bash('validate_profile_store').returncode, 0)
+
+    def test_profile_store_symlink_entry_rejected(self):
+        store = self.make_observed_profile_store()
+        (store / 'ConfigProfiles.binary').unlink()
+        (store / 'ConfigProfiles.binary').symlink_to(store / 'Provisioning.binary')
+        self.assertNotEqual(self.run_bash('validate_profile_store').returncode, 0)
+
+    def test_incomplete_observed_store_rejected(self):
+        store = self.make_observed_profile_store()
+        (store / 'ConfigProfiles.binary').unlink()
+        self.assertNotEqual(self.run_bash('validate_profile_store').returncode, 0)
+
+    def test_profile_store_subdirectory_rejected(self):
+        store = self.make_observed_profile_store()
+        (store / 'extra').mkdir()
+        self.assertNotEqual(self.run_bash('validate_profile_store').returncode, 0)
+
+    def test_multiple_store_markers_rejected(self):
+        store = self.make_observed_profile_store()
+        (store / '.0123456789').write_bytes(b'')
+        self.assertNotEqual(self.run_bash('validate_profile_store').returncode, 0)
 
     def test_uid_collision_is_skipped_without_logs_in_value(self):
         self.write_plist(self.node / "users/one.plist", {"uid": ["501"]})

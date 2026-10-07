@@ -1,7 +1,7 @@
 #!/bin/bash
 # Original implementation. macOS ships Bash 3.2; do not use newer Bash features.
 
-VERSION=0.1.3-rc1
+VERSION=0.1.4-rc1
 TARGET=''
 BACKUP=''
 ADMIN=''
@@ -20,6 +20,7 @@ END_BLOCK='# END mac-enrollment-lab'
 log() { printf '%s\n' "$*" >&2; }
 fail() { log "ERROR: $*"; return 1; }
 plist_get() { /usr/libexec/PlistBuddy -c "Print :$2" "$1" 2>/dev/null; }
+plist_xml() { /usr/libexec/PlistBuddy -x -c Print "$1" 2>/dev/null; }
 hash_shasum() { /usr/bin/shasum -a 256 "$1"; }
 hash_openssl() { /usr/bin/openssl dgst -sha256 "$1"; }
 # BEGIN EMBEDDED SHA256
@@ -283,9 +284,57 @@ build_paths() {
     )
 }
 
+hash_only_preferences() {
+    local xml payload prefix suffix LC_ALL=C
+    # Check the exact key before whitespace normalization of serialized XML.
+    plist_get "$1" MDMServerHash >/dev/null || return 1
+    xml=$(plist_xml "$1") || return 1
+    xml=${xml//[[:space:]]/}
+    prefix='<plistversion="1.0"><dict><key>MDMServerHash</key><data>'
+    suffix='</data></dict></plist>'
+    case "$xml" in *"$prefix"*"$suffix") ;; *) return 1 ;; esac
+    payload=${xml#*"$prefix"}
+    payload=${payload%"$suffix"}
+    [[ "$payload" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] && [ "$((${#payload} % 4))" -eq 0 ]
+}
+
+validate_profile_store() {
+    local store="$TARGET/private/var/db/ConfigurationProfiles/Store" entry name count=0 markers=0
+    [ ! -L "$store" ] || { fail 'Profile store symlink refused.'; return 1; }
+    [ -e "$store" ] || return 0
+    [ -d "$store" ] || { fail 'Profile store is not a directory.'; return 1; }
+    for entry in "$store"/* "$store"/.[!.]* "$store"/..?*; do
+        if [ ! -e "$entry" ] && [ ! -L "$entry" ]; then continue; fi
+        [ -f "$entry" ] && [ ! -L "$entry" ] || { fail 'Non-regular profile-store entry; enrollment status unknown.'; return 1; }
+        count=$((count + 1))
+        name=${entry##*/}
+        case "$name" in
+            ConfigProfiles.binary|Provisioning.binary)
+                [ ! -s "$entry" ] || { fail 'Nonempty profile database; this experiment does not support that store.'; return 1; } ;;
+            MCXPrivate.keychain)
+                [ -s "$entry" ] || { fail 'Unexpected empty profile keychain.'; return 1; } ;;
+            MDM_ComputerPrefs.plist)
+                hash_only_preferences "$entry" || { fail 'Unrecognized profile preferences; enrollment status unknown.'; return 1; } ;;
+            *)
+                [[ "$name" =~ ^\.[a-fA-F0-9]{10}$ ]] && [ ! -s "$entry" ] || {
+                    fail 'Unexpected profile-store file; enrollment status unknown.'; return 1;
+                }
+                markers=$((markers + 1)) ;;
+        esac
+    done
+    [ "$count" -ne 0 ] || return 0
+    [ "$count" -eq 5 ] && [ "$markers" -eq 1 ] &&
+        [ -f "$store/ConfigProfiles.binary" ] && [ -f "$store/Provisioning.binary" ] &&
+        [ -f "$store/MCXPrivate.keychain" ] && [ -f "$store/MDM_ComputerPrefs.plist" ] || {
+            fail 'Incomplete or unrecognized profile store; enrollment status unknown.'; return 1;
+        }
+    log 'Profile store matches the observed post-reinstall layout; all store files will be preserved.'
+    log 'Enrollment status remains UNKNOWN. This file-layout check is not proof of unenrollment.'
+}
+
 validate_fresh_install() {
     valid_name "$ADMIN" || { fail 'Admin name: 1–31 lowercase letters/digits/underscores, starting with a letter; root forbidden.'; return 1; }
-    [ ! -e "$TARGET/private/var/db/.AppleSetupDone" ] || { fail 'Setup is already complete. This version only handles fresh installations.'; return 1; }
+    [ ! -e "$TARGET/private/var/db/.AppleSetupDone" ] || { fail 'Setup-completion marker exists; this experiment requires it to be absent. The marker alone does not establish enrollment status.'; return 1; }
     # An offline-created account does not automatically acquire a Secure Token.
     [ "$(plist_get "$SCRATCH/target.plist" FileVault)" = false ] || {
         fail 'New offline accounts on FileVault-enabled/unknown volumes are unsupported.'; return 1;
@@ -312,16 +361,7 @@ validate_fresh_install() {
         fail 'Requested home directory already exists.'; return 1;
     }
     [ -d "$TARGET/Users" ] && [ ! -L "$TARGET/Users" ] || { fail 'Invalid Users directory.'; return 1; }
-    # Do not interpret an installed MDM profile as a setup-only enrollment record.
-    local store="$TARGET/private/var/db/ConfigurationProfiles/Store"
-    if [ -L "$store" ]; then fail 'Profile store symlink refused.'; return 1; fi
-    if [ -d "$store" ]; then
-        local first_file
-        first_file=$(/usr/bin/find "$store" -type f -print -quit) || return 1
-        if [ -n "$first_file" ]; then
-            fail 'Profile store contains files. Already-configured devices are outside this prototype’s scope.'; return 1
-        fi
-    fi
+    validate_profile_store || return 1
     /usr/bin/grep -Fq "$BEGIN_BLOCK" "$TARGET/private/etc/hosts" && {
         fail 'A previous lab block exists; restore its snapshot before another apply.'; return 1;
     }

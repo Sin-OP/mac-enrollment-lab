@@ -6,6 +6,8 @@ Recovery feedback, 2026-10-05: the launcher download completed on the test devic
 
 Recovery feedback, 2026-10-06: the read-only trace identified a silent failure querying `/System/Volumes/Data` with diskutil. The same device reported that path as Recovery tmpfs via df. v0.1.3-rc1 recognizes that specific case while preserving the live macOS Data-volume check. No installation changes were made by the preview. Device retest of this fix is pending.
 
+Recovery feedback, 2026-10-07: the user erased, activated and reinstalled macOS, then returned to Recovery before account setup. v0.1.3-rc1 recognized Recovery tmpfs and stopped on the nonempty profile store. Photos showed zero-byte ConfigProfiles.binary and Provisioning.binary, a zero-byte hexadecimal marker, a keychain, and a preferences dictionary containing only binary MDMServerHash data. That evidence does not establish completed enrollment. v0.1.4-rc1 adds a narrow experimental allowance for this layout while preserving all store files and reporting enrollment status UNKNOWN. Device apply test remains pending.
+
 No completed hardware trials yet.
 
 | Target | State | Result |
@@ -24,5 +26,7 @@ Prerelease v0.1.1-rc1: Bash 3.2 syntax check passed; all 35 isolated tests passe
 Prerelease v0.1.2-rc1: all 57 isolated tests passed locally on Bash 3.2, including known SHA-256 answers, binary/padding cases, downloaded-script integrity, and fixture backup/restore with both external checksum utilities unavailable. Device retest remains pending.
 
 Prerelease v0.1.3-rc1: 66 isolated tests passed locally (65-test suite plus the additional full-preview regression). Tests reproduce a failed live-path diskutil query followed by verified Recovery tmpfs, and retain rejection of a matching live Data UUID, missing UUIDs, unknown filesystems and failed queries. Hardware retest remains pending.
+
+Prerelease v0.1.4-rc1: all 75 isolated tests passed locally, including XML/binary preferences, strict schema rejection, populated/unknown store rejection, and preservation of every store file through fixture apply and restore.
 
 Add exact commits, build numbers, trial stages and redacted results following [TESTING.md](TESTING.md). Do not replace “unverified” with “supported” on the basis of CI alone.

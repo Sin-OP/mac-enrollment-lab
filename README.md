@@ -23,13 +23,13 @@ It does not rename volumes, disable SIP, alter the sealed system volume, install
 For manual typing in **Recovery Terminal**, use the guided launcher:
 
 ```bash
-curl -fL https://sin-op.github.io/mac-enrollment-lab/go3 -o /tmp/lab &&
+curl -fL https://sin-op.github.io/mac-enrollment-lab/go4 -o /tmp/lab &&
 bash /tmp/lab
 ```
 
-Recovery builds without `openssl` or `shasum` use an embedded Bash-only SHA-256 fallback. The launcher downloads and verifies the pinned `v0.1.3-rc1` core, then presents numbered volume selections. Choose option 1 to preview the experiment. It requests `APPLY` before changes; options 2 and 3 verify or restore. An appropriate separate backup volume is still required. The HTTPS launcher is served from this repository's GitHub Pages site; its embedded checksum pins the core, not the launcher itself.
+Recovery builds without `openssl` or `shasum` use an embedded Bash-only SHA-256 fallback. The launcher downloads and verifies the pinned `v0.1.4-rc1` core, then presents numbered volume selections. Choose option 1 to preview the experiment. It requests `APPLY` before changes; options 2 and 3 verify or restore. An appropriate separate backup volume is still required. The HTTPS launcher is served from this repository's GitHub Pages site; its embedded checksum pins the core, not the launcher itself.
 
-For the first trial, use [v0.1.3-rc1](https://github.com/Sin-OP/mac-enrollment-lab/releases/tag/v0.1.3-rc1). The [deployment guide](docs/DEPLOYMENT.md) includes direct download and checksum verification in Recovery Terminal, as well as USB transfer. Backup storage must have ownership enforcement enabled.
+For the first trial, use [v0.1.4-rc1](https://github.com/Sin-OP/mac-enrollment-lab/releases/tag/v0.1.4-rc1). The [deployment guide](docs/DEPLOYMENT.md) includes direct download and checksum verification in Recovery Terminal, as well as USB transfer. Backup storage must have ownership enforcement enabled.
 
 Download a specific Git commit or release on another computer, inspect the script, and copy the repository to an APFS-formatted USB drive. Keep that drive connected for the test. Avoid executing a changing branch directly over the network.
 
@@ -94,12 +94,12 @@ Backups contain private local configuration and account membership information. 
 | Sonoma 14.4, fresh install at Remote Management | Initial device test target; hardware result pending |
 | Newer macOS versions | Experimental; no compatibility claim |
 | Intel versus Apple silicon | Uses common macOS interfaces; both require separate hardware validation |
-| Already-enrolled or completed installation | Refused by this version |
+| Setup-completion marker or populated/unrecognized profile store | Refused by this version |
 | FileVault-enabled target | Offline account creation refused; no Secure Token/volume ownership claim |
 | Activation Lock, firmware/Recovery password | Not addressed |
 | Server-side organizational release | Not performed |
 
-The script checks APFS role metadata instead of localized volume names. It intentionally fails when required information is missing. The profile-store guard is conservative: a store containing files stops the operation, even if those files might be harmless. Report that refusal privately/redacted rather than weakening it on an unknown installation.
+The script checks APFS role metadata instead of localized volume names. It intentionally fails when required information is missing. The profile-store guard accepts an absent/empty store or the narrow post-reinstall file layout observed on the disposable test device. A matching layout is not proof of unenrollment: enrollment status remains UNKNOWN. Nonempty profile databases, extra preferences, unexpected files, directories and symlinks are refused. No store file is modified or deleted. See docs/DESIGN.md for the exact criteria and limitations.
 
 Apple documents renewed enrollment enforcement on registered Macs running macOS 14 or later. A desktop login, failed query, or local `MDM enrollment: No` result is not proof of permanent removal. The organization can [release a device](https://support.apple.com/guide/apple-business-manager/release-devices-axmec4d28461/web); that server-side action is outside this tool.
 

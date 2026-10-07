@@ -20,6 +20,12 @@ The source is one Bash 3.2-compatible file so Recovery does not need Python, Hom
 - An exclusive directory lock prevents concurrent runs of this tool on the target. It is not a general operating-system lock.
 - Checksums prefer `shasum`/`openssl` when available. Recovery environments without both use the embedded Bash 3.2 SHA-256 implementation. It hashes bytes, including NULs and high-bit bytes, using only shell builtins. If no method produces a digest, backup preparation stops before target changes. Digest mismatches remain failures.
 
+## Observed profile-store layout
+
+After a complete erase, activation and reinstall, the test device still created a profile store before account setup. v0.1.4-rc1 permits precisely five regular, nonsymlink files: zero-byte `ConfigProfiles.binary` and `Provisioning.binary`; one zero-byte dot marker named with ten hexadecimal characters; a nonempty `MCXPrivate.keychain`; and a readable `MDM_ComputerPrefs.plist` whose only dictionary key is `MDMServerHash` with a nonempty data value. Preferences are parsed by PlistBuddy, then its serialized XML is checked for that single-field structure. Extra keys and different value types fail. An absent or empty store remains accepted.
+
+This is an empirical allowance for a disposable fresh-install experiment, not an Apple-documented enrollment detector. The keychain is opaque and not inspected. The tool explicitly reports enrollment status as UNKNOWN, preserves every profile-store file, and does not infer that management has been removed. The setup-completion marker must still be absent, FileVault must be off, and all account/volume/backup checks remain in force. Populated profile databases or any unrecognized store state stop the operation. No hardware apply has yet validated the new allowance.
+
 ## Failure behavior
 
 Every intended mutation checks its return value. An apply failure after the completed snapshot invokes rollback from the EXIT trap. INT, HUP and TERM exit through that trap. There is no unconditional “bypass succeeded” banner; the strongest programmatic success claim is that local file checks passed.
