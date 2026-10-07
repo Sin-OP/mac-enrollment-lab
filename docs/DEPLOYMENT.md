@@ -15,6 +15,22 @@ Use option 3 for immediate rollback while the new account home is empty. A faile
 
 The HTTPS launcher is a small bootstrap served from `docs/go2` (also mirrored at `docs/go`) using GitHub Pages. It pins the core release and checksum. Its own trust comes from HTTPS and this GitHub account, not an independently verified launcher signature. The longer method below also remains available.
 
+## Diagnose a silent preview failure
+
+If the menu reports a failed preview without a reason, this diagnostic verifies
+the same pinned core and runs only `plan` with Bash tracing. It defaults to
+`/Volumes/Data` and the requested test account `epyon`; two optional arguments
+can override those values. It cannot dispatch apply or restore.
+
+```bash
+curl -4fL https://sin-op.github.io/mac-enrollment-lab/check -o /tmp/check &&
+bash /tmp/check
+```
+
+The diagnostic prints the last 40 trace lines and keeps the full log in its
+private temporary directory until removed or Recovery restarts. It does not
+upload the log. The trace can contain local paths, volume IDs and account names.
+
 ## Optional manual download when a checksum utility is available
 
 Recovery must have an internet connection for the download. The tool itself needs no network connection to execute. Keep the device connected for the later behavioral test as described in TESTING.md.

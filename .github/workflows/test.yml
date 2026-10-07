@@ -20,6 +20,7 @@ jobs:
           /bin/bash -n enrollment-lab.sh
           /bin/bash -n launcher.sh
           /bin/bash -n docs/go
+          /bin/bash -n docs/check
       - name: Run isolated fixture tests
         run: |
           python3 scripts/bundle.py --check
