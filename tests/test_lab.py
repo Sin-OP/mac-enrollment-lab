@@ -109,6 +109,12 @@ build_paths
     def assert_ok(self, result):
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
 
+    def test_platform_check_uses_bash_ostype_in_recovery(self):
+        self.assert_ok(self.run_bash('OSTYPE=darwin23; require_macos'))
+        result = self.run_bash('OSTYPE=linux; require_macos')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('macOS is required', result.stderr)
+
     def test_apply_verify_and_restore_exact_files_and_modes(self):
         r = self.run_bash("validate_fresh_install && apply_transaction && load_backup && restore_snapshot")
         self.assert_ok(r)

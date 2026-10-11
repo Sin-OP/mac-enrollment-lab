@@ -1,8 +1,8 @@
 #!/bin/bash
 # Interactive download launcher. The core release and checksum are fixed.
-CORE_VERSION=0.1.5-rc1
-CORE_URL=https://github.com/Sin-OP/mac-enrollment-lab/releases/download/v0.1.5-rc1/enrollment-lab.sh
-CORE_SHA=8daa091ad7c1c7cc96d3e31291a5fb2975bb7e095d5317d32c4fa0d57ab7b9da
+CORE_VERSION=0.1.6-rc1
+CORE_URL=https://github.com/Sin-OP/mac-enrollment-lab/releases/download/v0.1.6-rc1/enrollment-lab.sh
+CORE_SHA=e73e037d46b0292b17ef1e6e0bf8d0a4c1f316f0d3b3dc11c35424d1c0255beb
 LAB_TMP=''
 CORE=''
 CHOICES=()
@@ -111,6 +111,10 @@ download_verified_core() {
     say 'Checksum verified.'
 }
 
+launcher_is_macos() {
+    case ${OSTYPE:-} in darwin*) return 0 ;; *) return 1 ;; esac
+}
+
 run_core() { /bin/bash "$CORE" "$@"; }
 
 collect_volumes() {
@@ -213,7 +217,7 @@ launcher_main() {
     set -o pipefail
     umask 077
     export PATH=/usr/bin:/bin:/usr/sbin:/sbin
-    [ "$(/usr/bin/uname -s)" = Darwin ] || { say 'This launcher requires macOS.'; return 1; }
+    launcher_is_macos || { say 'This launcher requires macOS.'; return 1; }
     [ -t 0 ] && [ -t 1 ] || { say 'Run from an interactive Terminal.'; return 1; }
     LAB_TMP=$(/usr/bin/mktemp -d /tmp/enrollment-lab-menu.XXXXXXXX) || return 1
     trap launcher_cleanup EXIT

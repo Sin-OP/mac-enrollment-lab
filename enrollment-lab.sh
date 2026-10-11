@@ -1,7 +1,7 @@
 #!/bin/bash
 # Original implementation. macOS ships Bash 3.2; do not use newer Bash features.
 
-VERSION=0.1.5-rc1
+VERSION=0.1.6-rc1
 TARGET=''
 BACKUP=''
 ADMIN=''
@@ -166,7 +166,12 @@ cleanup() {
     exit "$rc"
 }
 
-require_macos() { [ "$(/usr/bin/uname -s)" = Darwin ] || fail 'macOS is required.'; }
+require_macos() {
+    case ${OSTYPE:-} in
+        darwin*) return 0 ;;
+        *) fail 'macOS is required.'; return 1 ;;
+    esac
+}
 
 require_recovery() {
     [ "$EUID" -eq 0 ] || { fail 'Run from the root Terminal in Recovery.'; return 1; }

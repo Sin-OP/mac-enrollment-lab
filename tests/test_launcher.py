@@ -23,6 +23,14 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual((ROOT / 'launcher.sh').read_bytes(), (ROOT / 'docs/go3').read_bytes())
         self.assertEqual((ROOT / 'launcher.sh').read_bytes(), (ROOT / 'docs/go4').read_bytes())
         self.assertEqual((ROOT / 'launcher.sh').read_bytes(), (ROOT / 'docs/go5').read_bytes())
+        self.assertEqual((ROOT / 'launcher.sh').read_bytes(), (ROOT / 'docs/go6').read_bytes())
+
+    def test_recovery_platform_check_needs_no_uname_binary(self):
+        self.assertNotIn('/usr/bin/uname', (ROOT / 'launcher.sh').read_text())
+        self.assertNotIn('/usr/bin/uname', (ROOT / 'enrollment-lab.sh').read_text())
+        self.assertNotIn('/usr/bin/uname', (ROOT / 'docs/check').read_text())
+        self.assertEqual(self.run_shell('OSTYPE=darwin23; launcher_is_macos').returncode, 0)
+        self.assertNotEqual(self.run_shell('OSTYPE=linux; launcher_is_macos').returncode, 0)
 
     def test_core_pin_matches_reviewed_script(self):
         r = self.run_shell('printf "%s" "$CORE_SHA"')

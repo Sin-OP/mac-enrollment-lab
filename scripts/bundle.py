@@ -34,7 +34,8 @@ def main():
     diagnostic = launcher.split('\nrun_core() {', 1)[0] + '\n' + (ROOT / 'diagnostic.sh').read_text()
     for relative, data in [('enrollment-lab.sh', core), ('launcher.sh', launcher),
                            ('docs/go', launcher), ('docs/go2', launcher), ('docs/go3', launcher),
-                           ('docs/go4', launcher), ('docs/go5', launcher), ('docs/check', diagnostic)]:
+                           ('docs/go4', launcher), ('docs/go5', launcher), ('docs/go6', launcher),
+                           ('docs/check', diagnostic)]:
         path = ROOT / relative
         if args.check:
             if path.read_text() != data:

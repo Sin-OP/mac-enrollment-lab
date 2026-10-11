@@ -13,7 +13,7 @@ diagnostic_plan() {
 
 diagnostic_main() {
     [ "$#" -le 2 ] || { say 'Usage: check [Data-volume-path [account-name]]'; return 2; }
-    [ "$(/usr/bin/uname -s)" = Darwin ] || { say 'This check requires macOS.'; return 1; }
+    launcher_is_macos || { say 'This check requires macOS.'; return 1; }
     umask 077
     export PATH=/usr/bin:/bin:/usr/sbin:/sbin
     LAB_TMP=$(/usr/bin/mktemp -d /tmp/enrollment-check.XXXXXXXX) || return 1
