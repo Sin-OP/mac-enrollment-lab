@@ -1,0 +1,63 @@
+#!/bin/bash
+# Read-only profile-preferences shape report for a mounted macOS Data volume.
+# Values from the plist are never printed.
+set -u
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin
+
+inspect_store() {
+    local volume=$1 prefs xml compact rest key count=0 hash_type=absent payload
+    prefs="$volume/private/var/db/ConfigurationProfiles/Store/MDM_ComputerPrefs.plist"
+    [ -f "$prefs" ] && [ ! -L "$prefs" ] || {
+        printf 'Volume: %s\nMDM_ComputerPrefs.plist: absent or not a regular file\n' "$volume"
+        return 1
+    }
+    printf 'Volume: %s\n' "$volume"
+    if ! xml=$(/usr/libexec/PlistBuddy -x -c Print "$prefs" 2>/dev/null); then
+        printf 'PlistBuddy XML parse: failed\n'
+        return 1
+    fi
+    compact=${xml//[[:space:]]/}
+    case "$compact" in
+        *'<plistversion="1.0"><dict>'*'</dict></plist>') printf 'Expected plist/dictionary wrapper: yes\n' ;;
+        *) printf 'Expected plist/dictionary wrapper: no\n' ;;
+    esac
+    rest=$xml
+    while [[ $rest == *'<key>'* ]]; do
+        rest=${rest#*'<key>'}
+        key=${rest%%'</key>'*}
+        count=$((count + 1))
+        [ "$key" = MDMServerHash ] || printf 'Other key name: %s\n' "$key"
+        rest=${rest#*'</key>'}
+    done
+    printf 'Key count: %s\n' "$count"
+    case "$compact" in
+        *'<key>MDMServerHash</key><data>'*) hash_type=data ;;
+        *'<key>MDMServerHash</key><string>'*) hash_type=string ;;
+        *'<key>MDMServerHash</key>'*) hash_type=other ;;
+    esac
+    printf 'MDMServerHash type: %s\n' "$hash_type"
+    if [ "$hash_type" = data ]; then
+        payload=${compact#*'<key>MDMServerHash</key><data>'}
+        payload=${payload%%'</data>'*}
+        if [ -n "$payload" ]; then
+            printf 'MDMServerHash data: nonempty\n'
+        else
+            printf 'MDMServerHash data: empty\n'
+        fi
+    fi
+}
+
+if [ "$#" -eq 1 ]; then
+    inspect_store "$1"
+elif [ "$#" -eq 0 ]; then
+    found=false
+    for prefs in /Volumes/*/private/var/db/ConfigurationProfiles/Store/MDM_ComputerPrefs.plist; do
+        [ -e "$prefs" ] || continue
+        found=true
+        inspect_store "${prefs%/private/var/db/ConfigurationProfiles/Store/MDM_ComputerPrefs.plist}" || true
+    done
+    [ "$found" = true ] || { printf 'No mounted profile-preferences file found.\n'; exit 1; }
+else
+    printf 'Usage: bash store [mounted Data-volume path]\n' >&2
+    exit 2
+fi

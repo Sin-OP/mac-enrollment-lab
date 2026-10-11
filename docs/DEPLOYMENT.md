@@ -31,6 +31,15 @@ The diagnostic prints the last 40 trace lines and keeps the full log in its
 private temporary directory until removed or Recovery restarts. It does not
 upload the log. The trace can contain local paths, volume IDs and account names.
 
+If the preview instead reports `Unrecognized profile preferences`, do not apply or delete profile-store files. The read-only [store inspector](store) reports plist key names and value types without printing values. It finds mounted Data volumes automatically:
+
+```bash
+curl -4fL https://raw.githubusercontent.com/Sin-OP/mac-enrollment-lab/main/docs/store -o /tmp/store &&
+bash /tmp/store
+```
+
+Send only the inspector's summary for review. A different layout is an unknown enrollment state, not evidence that the existing rule should be widened.
+
 ## Optional manual download when a checksum utility is available
 
 Recovery must have an internet connection for the download. The tool itself needs no network connection to execute. Keep the device connected for the later behavioral test as described in TESTING.md.
