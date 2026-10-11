@@ -63,6 +63,19 @@ class StoreSummaryTests(unittest.TestCase):
         self.assertIn('key count and type UNKNOWN', result.stdout)
         self.assertNotIn('MDMServerHash type: absent', result.stdout)
 
+    def test_empty_dictionary_is_identified_without_guessing_enrollment(self):
+        result = self.inspect({})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Top-level type: empty dictionary', result.stdout)
+        self.assertIn('Key count: 0', result.stdout)
+        self.assertIn('MDMServerHash type: absent', result.stdout)
+
+    def test_empty_array_is_distinguished_from_empty_dictionary(self):
+        result = self.inspect([])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Top-level type: empty array', result.stdout)
+        self.assertIn('Key count: 0', result.stdout)
+
 
 if __name__ == '__main__':
     unittest.main()
