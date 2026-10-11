@@ -4,18 +4,32 @@
 set -u
 export PATH=/usr/bin:/bin:/usr/sbin:/sbin
 
+plistbuddy_xml() { /usr/libexec/PlistBuddy -x -c Print "$1" 2>/dev/null; }
+plutil_xml() { /usr/bin/plutil -convert xml1 -o - "$1" 2>/dev/null; }
+
 inspect_store() {
-    local volume=$1 prefs xml compact rest key count=0 hash_type=absent payload
+    local volume=$1 prefs xml compact rest key count=0 hash_type=absent payload source
     prefs="$volume/private/var/db/ConfigurationProfiles/Store/MDM_ComputerPrefs.plist"
     [ -f "$prefs" ] && [ ! -L "$prefs" ] || {
         printf 'Volume: %s\nMDM_ComputerPrefs.plist: absent or not a regular file\n' "$volume"
         return 1
     }
     printf 'Volume: %s\n' "$volume"
-    if ! xml=$(/usr/libexec/PlistBuddy -x -c Print "$prefs" 2>/dev/null); then
-        printf 'PlistBuddy XML parse: failed\n'
-        return 1
-    fi
+    source='PlistBuddy XML'
+    xml=$(plistbuddy_xml "$prefs") || xml=''
+    case "$xml" in
+        *'<plist'*) ;;
+        *)
+            source='plutil XML'
+            xml=$(plutil_xml "$prefs") || xml=''
+            case "$xml" in
+                *'<plist'*) ;;
+                *)
+                    printf 'XML serialization: unavailable; key count and type UNKNOWN\n'
+                    return 1 ;;
+            esac ;;
+    esac
+    printf 'XML source: %s\n' "$source"
     compact=${xml//[[:space:]]/}
     case "$compact" in
         *'<plistversion="1.0"><dict>'*'</dict></plist>') printf 'Expected plist/dictionary wrapper: yes\n' ;;
@@ -47,17 +61,21 @@ inspect_store() {
     fi
 }
 
-if [ "$#" -eq 1 ]; then
-    inspect_store "$1"
-elif [ "$#" -eq 0 ]; then
-    found=false
-    for prefs in /Volumes/*/private/var/db/ConfigurationProfiles/Store/MDM_ComputerPrefs.plist; do
-        [ -e "$prefs" ] || continue
-        found=true
-        inspect_store "${prefs%/private/var/db/ConfigurationProfiles/Store/MDM_ComputerPrefs.plist}" || true
-    done
-    [ "$found" = true ] || { printf 'No mounted profile-preferences file found.\n'; exit 1; }
-else
-    printf 'Usage: bash store [mounted Data-volume path]\n' >&2
-    exit 2
-fi
+main() {
+    local prefs found=false
+    if [ "$#" -eq 1 ]; then
+        inspect_store "$1"
+    elif [ "$#" -eq 0 ]; then
+        for prefs in /Volumes/*/private/var/db/ConfigurationProfiles/Store/MDM_ComputerPrefs.plist; do
+            [ -e "$prefs" ] || continue
+            found=true
+            inspect_store "${prefs%/private/var/db/ConfigurationProfiles/Store/MDM_ComputerPrefs.plist}" || true
+        done
+        [ "$found" = true ] || { printf 'No mounted profile-preferences file found.\n'; return 1; }
+    else
+        printf 'Usage: bash store [mounted Data-volume path]\n' >&2
+        return 2
+    fi
+}
+
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then main "$@"; fi

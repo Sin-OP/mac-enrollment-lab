@@ -6,6 +6,8 @@
 
 On a different Mac in Recovery, the public `go5` launcher downloaded successfully (10,386 bytes) but stopped before fetching the core: `/usr/bin/uname` was absent, and the launcher misreported that macOS was required. No core command or installation change ran. v0.1.6-rc1 uses Bash's built-in `OSTYPE` for the launcher, diagnostic, and core platform checks. On retry, the mirrored `go5` launcher downloaded and verified v0.1.6-rc1, then its read-only plan selected `/Volumes/HDD - Data` and stopped at `Unrecognized profile preferences; enrollment status unknown.` No application was attempted. This second device's profile-preferences layout needs inspection before any validation-rule change. Its model and installed OS build are not yet recorded.
 
+The first read-only inspector run reported no XML keys from both `/Volumes/HDD - Data` and `/Volumes/HDD`, despite PlistBuddy returning success. This is inconclusive about the plist's contents; the inspector's original output treated non-XML serialization as though the hash key were absent. The revised inspector tries read-only `plutil` XML conversion and reports UNKNOWN if XML remains unavailable. Retest is pending.
+
 ### Current evidence: 2026-10-07
 
 The user reported reaching the desktop without a forced enrollment prompt after applying the v0.1.5-rc1 trial. An authorized SSH audit then observed the following on one Mac15,11 (arm64), running macOS 14.8.9, build 23J631. This is the reinstalled OS, not the originally reported 14.4 build. Release source commit: `734dc3ecdac164cdbe9ae17d8e6607381ec20503`; the Recovery apply exit status was not independently captured over SSH.

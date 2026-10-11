@@ -1,6 +1,7 @@
 """The Recovery store inspector reports structure without plist values."""
 import plistlib
 from pathlib import Path
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -11,14 +12,19 @@ SCRIPT = ROOT / "docs/store"
 
 @unittest.skipUnless(Path('/usr/libexec/PlistBuddy').exists(), 'macOS PlistBuddy')
 class StoreSummaryTests(unittest.TestCase):
-    def inspect(self, fields):
+    def inspect(self, fields, override=''):
         with tempfile.TemporaryDirectory() as td:
             volume = Path(td)
             store = volume / 'private/var/db/ConfigurationProfiles/Store'
             store.mkdir(parents=True)
             (store / 'MDM_ComputerPrefs.plist').write_bytes(plistlib.dumps(fields))
-            return subprocess.run(['/bin/bash', str(SCRIPT), str(volume)],
-                                  capture_output=True, text=True)
+            if override:
+                body = (f'source {shlex.quote(str(SCRIPT))}\n' + override + '\n'
+                        f'inspect_store {shlex.quote(str(volume))}')
+                command = ['/bin/bash', '-c', body]
+            else:
+                command = ['/bin/bash', str(SCRIPT), str(volume)]
+            return subprocess.run(command, capture_output=True, text=True)
 
     def test_binary_data_shape_without_value(self):
         result = self.inspect({'MDMServerHash': b'private-server-hash'})
@@ -41,6 +47,21 @@ class StoreSummaryTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('MDMServerHash type: string', result.stdout)
         self.assertNotIn('private-string', result.stdout)
+
+    def test_plain_plistbuddy_output_uses_read_only_plutil_fallback(self):
+        result = self.inspect({'MDMServerHash': b'private-server-hash'},
+                              "plistbuddy_xml() { printf 'Dict { private-server-hash }'; }")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('XML source: plutil XML', result.stdout)
+        self.assertIn('MDMServerHash type: data', result.stdout)
+        self.assertNotIn('private-server-hash', result.stdout)
+
+    def test_missing_xml_reports_unknown_instead_of_absent(self):
+        override = "plistbuddy_xml() { printf plain; }; plutil_xml() { return 1; }"
+        result = self.inspect({'MDMServerHash': b'private-server-hash'}, override)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('key count and type UNKNOWN', result.stdout)
+        self.assertNotIn('MDMServerHash type: absent', result.stdout)
 
 
 if __name__ == '__main__':
