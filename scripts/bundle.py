@@ -35,6 +35,7 @@ def main():
     for relative, data in [('enrollment-lab.sh', core), ('launcher.sh', launcher),
                            ('docs/go', launcher), ('docs/go2', launcher), ('docs/go3', launcher),
                            ('docs/go4', launcher), ('docs/go5', launcher), ('docs/go6', launcher),
+                           ('docs/go7', launcher),
                            ('docs/check', diagnostic)]:
         path = ROOT / relative
         if args.check:

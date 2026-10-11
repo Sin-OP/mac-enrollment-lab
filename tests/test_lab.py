@@ -273,6 +273,26 @@ load_backup
         self.assert_ok(r)
         self.assertEqual(self.capture(), snapshot)
 
+    def test_empty_preferences_accepted_without_mutation(self):
+        store = self.make_observed_profile_store()
+        for fmt in [plistlib.FMT_XML, plistlib.FMT_BINARY]:
+            with self.subTest(fmt=fmt):
+                (store / 'MDM_ComputerPrefs.plist').write_bytes(
+                    plistlib.dumps({}, fmt=fmt))
+                snapshot = self.capture()
+                r = self.run_bash('validate_fresh_install')
+                self.assert_ok(r)
+                self.assertIn('Enrollment status remains UNKNOWN', r.stderr)
+                self.assertEqual(self.capture(), snapshot)
+
+    def test_empty_preferences_preserved_by_apply_and_restore(self):
+        store = self.make_observed_profile_store()
+        self.write_plist(store / 'MDM_ComputerPrefs.plist', {})
+        snapshot = self.capture()
+        r = self.run_bash('validate_fresh_install && apply_transaction && load_backup && restore_snapshot')
+        self.assert_ok(r)
+        self.assertEqual(self.capture(), snapshot)
+
     def test_populated_profile_databases_rejected(self):
         store = self.make_observed_profile_store()
         for name in ['ConfigProfiles.binary', 'Provisioning.binary']:
@@ -286,7 +306,7 @@ load_backup
     def test_profile_preferences_schema_is_strict(self):
         store = self.make_observed_profile_store()
         for value in [
-            {}, {'MDMServerHash': b''}, {'MDMServerHash': 'text'},
+            [], 'not a dictionary', {'MDMServerHash': b''}, {'MDMServerHash': 'text'},
             {'MDMServerHash': b'hash', 'Other': True}, {'MDM ServerHash': b'hash'},
             {'MDMServerHash': {'nested': b'hash'}}, {'MDMServerHash': [b'hash']},
         ]:
@@ -295,6 +315,13 @@ load_backup
                 r = self.run_bash('validate_profile_store')
                 self.assertNotEqual(r.returncode, 0)
                 self.assertIn('Unrecognized profile preferences', r.stderr)
+
+    def test_malformed_profile_preferences_rejected(self):
+        store = self.make_observed_profile_store()
+        (store / 'MDM_ComputerPrefs.plist').write_bytes(b'not a plist')
+        r = self.run_bash('validate_profile_store')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('Unrecognized profile preferences', r.stderr)
 
     def test_unexpected_hidden_profile_file_rejected(self):
         store = self.make_observed_profile_store()

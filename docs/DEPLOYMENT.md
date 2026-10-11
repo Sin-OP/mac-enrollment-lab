@@ -1,19 +1,18 @@
 # Deploy the first hardware test
 
-Use prerelease **v0.1.6-rc1** for the next trial. It is a fixed test version, not a compatibility certification. Download it in **Recovery → Utilities → Terminal**, or copy the same release from a preparation computer onto an APFS USB drive.
+Use prerelease **v0.1.7-rc1** for the next trial. It is a fixed test version, not a compatibility certification. Download it in **Recovery → Utilities → Terminal**, or copy the same release from a preparation computer onto an APFS USB drive.
 
 ## Short command for manual typing
 
 ```bash
-curl -4fL https://raw.githubusercontent.com/Sin-OP/mac-enrollment-lab/main/docs/go6 -o /tmp/lab &&
-bash /tmp/lab
+curl -4fL https://sin-op.github.io/mac-enrollment-lab/go7 -o /tmp/l7 && bash /tmp/l7
 ```
 
-The `&&` prevents launching if the download fails. Enter the second line when Terminal asks for the continuation. The launcher verifies the pinned core's SHA-256, provides a numbered menu, and offers numbered selections for mounted volumes. Option 1 runs the plan before asking for the exact confirmation `APPLY`. A blank account name defaults to `labadmin`; passwords still have no default.
+The `&&` prevents launching if the download fails. The launcher verifies the pinned core's SHA-256, provides a numbered menu, and offers numbered selections for mounted volumes. Option 1 runs the plan before asking for the exact confirmation `APPLY`. A blank account name defaults to `labadmin`; passwords still have no default.
 
 Use option 3 for immediate rollback while the new account home is empty. A failed core operation is reported as a failure, and all core preflight checks remain in effect. Backup volumes must be mounted APFS/HFS volumes with ownership enabled. If no appropriate volume appears, mount it first in Disk Utility.
 
-The HTTPS launcher is a small bootstrap served from `docs/go6` (also mirrored at `docs/go`) using GitHub's raw-file endpoint. It pins the core release and checksum. Its own trust comes from HTTPS and this GitHub account, not an independently verified launcher signature. The longer method below also remains available.
+The HTTPS launcher is a small bootstrap served from `docs/go7` (also mirrored at `docs/go`) using GitHub Pages. It pins the core release and checksum. Its own trust comes from HTTPS and this GitHub account, not an independently verified launcher signature. The longer method below also remains available.
 
 ## Diagnose a silent preview failure
 
@@ -31,26 +30,25 @@ The diagnostic prints the last 40 trace lines and keeps the full log in its
 private temporary directory until removed or Recovery restarts. It does not
 upload the log. The trace can contain local paths, volume IDs and account names.
 
-If the preview instead reports `Unrecognized profile preferences`, do not apply or delete profile-store files. The read-only [store inspector](store) reports plist key names and value types without printing values. It finds mounted Data volumes automatically:
+If the preview instead reports `Unrecognized profile preferences`, the read-only [store inspector](store2) reports the top-level plist type, key names, and value types without printing values. It finds mounted Data volumes automatically:
 
 ```bash
-curl -4fL https://raw.githubusercontent.com/Sin-OP/mac-enrollment-lab/main/docs/store -o /tmp/store &&
-bash /tmp/store
+curl -4fL https://sin-op.github.io/mac-enrollment-lab/store2 -o /tmp/store && bash /tmp/store
 ```
 
-Send only the inspector's summary for review. A different layout is an unknown enrollment state, not evidence that the existing rule should be widened.
+Send only the inspector's summary for review. A different layout remains an unknown enrollment state.
 
 ## Optional manual download when a checksum utility is available
 
 Recovery must have an internet connection for the download. The tool itself needs no network connection to execute. Keep the device connected for the later behavioral test as described in TESTING.md.
 
-Some Recovery builds have neither OpenSSL nor shasum. Use the short `go6` command above in that environment; it includes a Bash-only SHA-256 fallback. The longer block below is only for environments where at least one checksum utility is available. It downloads and verifies the script, then lists volumes.
+Some Recovery builds have neither OpenSSL nor shasum. Use the short `go7` command above in that environment; it includes a Bash-only SHA-256 fallback. The longer block below is only for environments where at least one checksum utility is available. It downloads and verifies the script, then lists volumes.
 
 ```bash
 lab_dir=$(mktemp -d /tmp/enrollment-lab.XXXXXXXX) &&
 cd "$lab_dir" &&
-curl -fL https://github.com/Sin-OP/mac-enrollment-lab/releases/download/v0.1.6-rc1/enrollment-lab.sh -o enrollment-lab.sh &&
-curl -fL https://github.com/Sin-OP/mac-enrollment-lab/releases/download/v0.1.6-rc1/enrollment-lab.sh.sha256 -o enrollment-lab.sh.sha256 &&
+curl -fL https://github.com/Sin-OP/mac-enrollment-lab/releases/download/v0.1.7-rc1/enrollment-lab.sh -o enrollment-lab.sh &&
+curl -fL https://github.com/Sin-OP/mac-enrollment-lab/releases/download/v0.1.7-rc1/enrollment-lab.sh.sha256 -o enrollment-lab.sh.sha256 &&
 (
   expected=$(awk '{print $1}' enrollment-lab.sh.sha256)
   actual=$(openssl dgst -sha256 enrollment-lab.sh 2>/dev/null | awk '{print $NF}')

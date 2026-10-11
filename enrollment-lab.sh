@@ -1,7 +1,7 @@
 #!/bin/bash
 # Original implementation. macOS ships Bash 3.2; do not use newer Bash features.
 
-VERSION=0.1.6-rc1
+VERSION=0.1.7-rc1
 TARGET=''
 BACKUP=''
 ADMIN=''
@@ -303,6 +303,18 @@ hash_only_preferences() {
     [[ "$payload" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] && [ "$((${#payload} % 4))" -eq 0 ]
 }
 
+empty_preferences() {
+    local xml LC_ALL=C
+    xml=$(plist_xml "$1") || return 1
+    xml=${xml//[[:space:]]/}
+    # PlistBuddy emits either self-closing or paired empty dictionary tags.
+    # Its serializer supplies the XML preamble; the plist body must be empty.
+    case "$xml" in
+        *'<plistversion="1.0"><dict/></plist>'|*'<plistversion="1.0"><dict></dict></plist>') return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 validate_profile_store() {
     local store="$TARGET/private/var/db/ConfigurationProfiles/Store" entry name quoted_name count=0 markers=0
     [ ! -L "$store" ] || { fail 'Profile store symlink refused.'; return 1; }
@@ -319,7 +331,9 @@ validate_profile_store() {
             MCXPrivate.keychain)
                 [ -s "$entry" ] || { fail 'Unexpected empty profile keychain.'; return 1; } ;;
             MDM_ComputerPrefs.plist)
-                hash_only_preferences "$entry" || { fail 'Unrecognized profile preferences; enrollment status unknown.'; return 1; } ;;
+                hash_only_preferences "$entry" || empty_preferences "$entry" || {
+                    fail 'Unrecognized profile preferences; enrollment status unknown.'; return 1;
+                } ;;
             *)
                 [[ "$name" =~ ^\.fl[a-fA-F0-9]{8}$ ]] && [ ! -s "$entry" ] || {
                     printf -v quoted_name '%q' "$name"
@@ -334,7 +348,7 @@ validate_profile_store() {
         [ -f "$store/MCXPrivate.keychain" ] && [ -f "$store/MDM_ComputerPrefs.plist" ] || {
             fail 'Incomplete or unrecognized profile store; enrollment status unknown.'; return 1;
         }
-    log 'Profile store matches the observed post-reinstall layout; all store files will be preserved.'
+    log 'Profile store matches a narrow pre-setup layout; all store files will be preserved.'
     log 'Enrollment status remains UNKNOWN. This file-layout check is not proof of unenrollment.'
 }
 
