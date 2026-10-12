@@ -4,11 +4,11 @@
 
 The first version tests one mechanism: a fresh-install local admin plus setup/enrollment markers and three hosts entries. It does not remove organizational ownership records or claim to remove active management agents.
 
-The source is one Bash 3.2-compatible file so Recovery does not need Python, Homebrew, Git, external libraries, or internet access. There is no `eval`, executable configuration, telemetry, downloaded payload, self-update path or daemon installation.
+The core is one Bash 3.2-compatible file so Recovery does not need Python, Homebrew, Git, external libraries, or internet access after delivery. The optional launcher downloads a pinned core release and verifies its SHA-256 before execution. The core has no `eval`, executable configuration, telemetry, downloaded payload, self-update path or daemon installation.
 
 ## Boundaries
 
-- `diskutil ... -plist` and PlistBuddy supply structured disk metadata. Volume names are not used to infer APFS roles. The caller explicitly supplies the mount point.
+- `diskutil ... -plist` and PlistBuddy supply structured disk metadata. Volume names are not used to infer APFS roles. The caller explicitly supplies the mount point. Profile preferences require validated XML: when PlistBuddy succeeds without XML, the parser tries `plutil -convert xml1`; failure from both stops the preflight.
 - The live Data-volume UUID is rejected. Mutations also require root and a recognized Recovery boot-volume name. An unfamiliar Recovery environment is refused. If diskutil cannot inspect `/System/Volumes/Data`, the guard allows only a recognized Recovery boot with `df -Pk` confirming `tmpfs` mounted at that exact path. Other lookup failures remain fatal and now report a reason. The target itself still needs a writable APFS Data role and a valid UUID.
 - All changed paths live beneath the selected Data volume. Each path component is checked for symlinks. Volume renaming and System/Data pairing are unnecessary because there are no System-volume writes.
 - Account names are narrowly validated; existing account paths and home directories are refused. Existing UID records must be readable. Exhausting the bounded UID pool is a hard failure.
@@ -22,13 +22,15 @@ The source is one Bash 3.2-compatible file so Recovery does not need Python, Hom
 
 ## Observed profile-store layout
 
-After a complete erase, activation and reinstall, the first test device still created a profile store before account setup. The guard permits precisely five regular, nonsymlink files: zero-byte `ConfigProfiles.binary` and `Provisioning.binary`; one zero-byte dot marker named `.fl` followed by eight hexadecimal characters (lowercase letter L, not digit 1); a nonempty `MCXPrivate.keychain`; and a readable `MDM_ComputerPrefs.plist`. The preferences plist must serialize as either a dictionary with only `MDMServerHash` holding nonempty data, or an exactly empty dictionary. The latter is a v0.1.7-rc1 candidate for a second test device and has no hardware result yet. Extra keys, other root types, and different value types fail. An absent or empty store remains accepted.
+After a complete erase, activation and reinstall, the first test device still created a profile store before account setup. The guard permits precisely five regular, nonsymlink files: zero-byte `ConfigProfiles.binary` and `Provisioning.binary`; one zero-byte dot marker named `.fl` followed by eight hexadecimal characters (lowercase letter L, not digit 1); a nonempty `MCXPrivate.keychain`; and a readable `MDM_ComputerPrefs.plist`. The preferences plist must serialize as either a dictionary with only `MDMServerHash` holding nonempty data, or an exactly empty dictionary. The empty-dictionary variant was introduced in v0.1.7-rc1 and has no hardware result yet. v0.1.8-rc1 adds the validated XML fallback and reports an unrecognized plist's top-level type without printing its values. Extra keys, other root types, and different value types still fail. An absent or empty store remains accepted.
 
 This is an empirical allowance for a disposable fresh-install experiment, not an Apple-documented enrollment detector. The keychain is opaque and not inspected. The tool explicitly reports enrollment status as UNKNOWN, preserves every profile-store file, and does not infer that management has been removed. The setup-completion marker must still be absent, FileVault must be off, and all account/volume/backup checks remain in force. Populated profile databases or any unrecognized store state stop the operation. One subsequent device trial reached the desktop and retained the expected state through two restarts; see [RESULTS.md](RESULTS.md). That observation does not establish this layout's semantics on other devices or builds.
 
 ## Failure behavior
 
-Every intended mutation checks its return value. An apply failure after the completed snapshot invokes rollback from the EXIT trap. INT, HUP and TERM exit through that trap. There is no unconditional “bypass succeeded” banner; the strongest programmatic success claim is that local file checks passed.
+Every intended mutation checks its return value. An apply failure after the completed snapshot invokes rollback from the EXIT trap. INT, HUP and TERM exit through that trap. There is no unconditional “bypass succeeded” banner; the strongest programmatic success claim is that local file checks passed. Major checks carry stage codes: `T01`–`T02` for target/fresh-install checks, `A00`–`A07` for Recovery/apply, `V01` for verification, and `R00`–`R01` for restore. Specific error text accompanies many individual failures; the menu also reports the core exit status.
+
+The guided launcher reports a passing read-only preview before offering backup selection. Pressing Enter after preview ends without applying; continuing requires `Y`, then an exact `APPLY` confirmation. A failed preview, a cancelled prompt, and a failed apply have different messages. The launcher tries IPv4 first with bounded retries, then the standard route on IPv4 connectivity failure; it prints the curl exit code and a short diagnostic hint when needed, and never runs a failed or checksum-mismatched download. The optional read-only diagnostic uses normal `plan` output and stage/exit labels. It does not turn on Bash xtrace or retain a trace that could contain plist values.
 
 Rollback is best effort, not a filesystem transaction. It cannot recover automatically from power loss, SIGKILL or a failed underlying disk. A failure can leave a partial snapshot or a stale target lock. Failed rollback or restore deliberately retains the lock. Preserve those artifacts and inspect them in Recovery. Never remove a lock while another instance could be running.
 
@@ -40,7 +42,7 @@ The checksum fallback implements the unkeyed SHA-256 algorithm described in [FIP
 
 `lib/sha256.sh` is the maintained source. Run `python3 scripts/bundle.py` after changes to embed it into both standalone scripts, pin the updated core checksum/version, and refresh the Pages copies. CI checks that these generated sections are synchronized. No Python is needed at runtime on the device.
 
-Fixtures exercise target-role/identity rejection, UID collisions and exhaustion, path quoting and symlink guards, backup integrity, rollback, drift refusal, status-query errors, and preservation of hidden marker files. The tests replace only the platform boundaries inside the test process.
+Fixtures exercise target-role/identity rejection, UID collisions and exhaustion, path quoting and symlink guards, backup integrity, rollback, drift refusal, status-query errors, and preservation of hidden marker files. Launcher and diagnostic fixtures also cover blocked stages, cancellation, download-error hints, and suppression of trace values. The tests replace only the platform boundaries inside the test process.
 
 Tests do not establish that Apple's enrollment services honor these markers, that `dscl` creates a bootable account in a particular Recovery build, that Secure Token is provisioned, or that the hosts entries remain effective after an upgrade. Those are hardware questions, tracked in the testing protocol.
 

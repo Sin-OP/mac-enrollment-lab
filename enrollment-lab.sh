@@ -1,7 +1,7 @@
 #!/bin/bash
 # Original implementation. macOS ships Bash 3.2; do not use newer Bash features.
 
-VERSION=0.1.7-rc1
+VERSION=0.1.8-rc1
 TARGET=''
 BACKUP=''
 ADMIN=''
@@ -20,7 +20,17 @@ END_BLOCK='# END mac-enrollment-lab'
 log() { printf '%s\n' "$*" >&2; }
 fail() { log "ERROR: $*"; return 1; }
 plist_get() { /usr/libexec/PlistBuddy -c "Print :$2" "$1" 2>/dev/null; }
-plist_xml() { /usr/libexec/PlistBuddy -x -c Print "$1" 2>/dev/null; }
+plistbuddy_xml() { /usr/libexec/PlistBuddy -x -c Print "$1" 2>/dev/null; }
+plutil_xml() { /usr/bin/plutil -convert xml1 -o - "$1" 2>/dev/null; }
+grep_status() { /usr/bin/grep "$@"; }
+plist_xml() {
+    local output
+    output=$(plistbuddy_xml "$1") || output=''
+    if preferences_body "$output" >/dev/null; then printf '%s\n' "$output"; return 0; fi
+    output=$(plutil_xml "$1") || return 1
+    preferences_body "$output" >/dev/null || return 1
+    printf '%s\n' "$output"
+}
 hash_shasum() { /usr/bin/shasum -a 256 "$1"; }
 hash_openssl() { /usr/bin/openssl dgst -sha256 "$1"; }
 # BEGIN EMBEDDED SHA256
@@ -173,11 +183,39 @@ require_macos() {
     esac
 }
 
+require_executable() {
+    [ -x "$1" ] || { fail "Required Recovery utility unavailable: $1"; return 1; }
+}
+
+require_plan_tools() {
+    local tool
+    for tool in /usr/sbin/diskutil /usr/libexec/PlistBuddy /usr/bin/mktemp /usr/bin/grep /usr/bin/tr /bin/df /bin/rm; do
+        require_executable "$tool" || return 1
+    done
+}
+
+require_apply_tools() {
+    local tool
+    for tool in /usr/bin/dscl /usr/bin/uuidgen /usr/bin/dirname /usr/bin/basename \
+        /usr/sbin/chown /usr/bin/touch /bin/cp /bin/mv /bin/mkdir /bin/rm /bin/rmdir /bin/cat; do
+        require_executable "$tool" || return 1
+    done
+}
+
+require_restore_tools() {
+    local tool
+    for tool in /bin/mkdir /bin/rmdir /bin/rm /bin/cp /bin/cat /usr/bin/find; do
+        require_executable "$tool" || return 1
+    done
+}
+
 require_recovery() {
     [ "$EUID" -eq 0 ] || { fail 'Run from the root Terminal in Recovery.'; return 1; }
     local root_name
-    disk_info / > "$SCRATCH/root.plist" || return 1
-    root_name=$(plist_get "$SCRATCH/root.plist" VolumeName) || return 1
+    disk_info / > "$SCRATCH/root.plist" || { fail 'diskutil cannot inspect the Recovery boot volume.'; return 1; }
+    root_name=$(plist_get "$SCRATCH/root.plist" VolumeName) || {
+        fail 'Recovery boot volume name is unavailable from diskutil.'; return 1;
+    }
     case "$root_name" in
         'macOS Base System'|'OS X Base System'|'Recovery'|'macOS Recovery') ;;
         *) fail 'The boot volume is not a recognized Recovery environment.'; return 1 ;;
@@ -229,17 +267,33 @@ safe_path() {
 
 validate_target() {
     [ -n "$TARGET" ] && [ -d "$TARGET" ] || { fail 'Specify a mounted Data volume.'; return 1; }
-    TARGET=$(canonical_dir "$TARGET") || return 1
+    TARGET=$(canonical_dir "$TARGET") || { fail 'Cannot resolve the selected target mount path.'; return 1; }
     [ "$TARGET" != / ] || { fail 'The boot filesystem cannot be a target.'; return 1; }
-    disk_info "$TARGET" > "$SCRATCH/target.plist" || return 1
-    [ "$(plist_get "$SCRATCH/target.plist" MountPoint)" = "$TARGET" ] || {
+    disk_info "$TARGET" > "$SCRATCH/target.plist" || {
+        fail "diskutil cannot inspect the selected target: $TARGET"; return 1;
+    }
+    local mount_point filesystem writable
+    mount_point=$(plist_get "$SCRATCH/target.plist" MountPoint) || {
+        fail 'Target MountPoint is unavailable from diskutil.'; return 1;
+    }
+    [ "$mount_point" = "$TARGET" ] || {
         fail 'The target must be the volume mount point, not a directory inside it.'; return 1;
     }
-    [ "$(plist_get "$SCRATCH/target.plist" FilesystemType)" = apfs ] || { fail 'APFS required.'; return 1; }
-    [ "$(plist_get "$SCRATCH/target.plist" Writable)" = true ] || { fail 'Target is not writable/unlocked.'; return 1; }
-    VOLUME_UUID=$(plist_get "$SCRATCH/target.plist" VolumeUUID) || return 1
+    filesystem=$(plist_get "$SCRATCH/target.plist" FilesystemType) || {
+        fail 'Target filesystem type is unavailable from diskutil.'; return 1;
+    }
+    [ "$filesystem" = apfs ] || { fail 'APFS required.'; return 1; }
+    writable=$(plist_get "$SCRATCH/target.plist" Writable) || {
+        fail 'Target writability is unavailable from diskutil.'; return 1;
+    }
+    [ "$writable" = true ] || { fail 'Target is not writable/unlocked.'; return 1; }
+    VOLUME_UUID=$(plist_get "$SCRATCH/target.plist" VolumeUUID) || {
+        fail 'Target VolumeUUID is unavailable from diskutil.'; return 1;
+    }
     valid_uuid "$VOLUME_UUID" || { fail 'Invalid volume UUID.'; return 1; }
-    DEVICE_ID=$(plist_get "$SCRATCH/target.plist" DeviceIdentifier) || return 1
+    DEVICE_ID=$(plist_get "$SCRATCH/target.plist" DeviceIdentifier) || {
+        fail 'Target DeviceIdentifier is unavailable from diskutil.'; return 1;
+    }
     [[ "$DEVICE_ID" =~ ^disk[0-9]+s[0-9]+$ ]] || { fail 'Unexpected device identifier.'; return 1; }
 
     # Never accept the running system's Data volume, even through another mount path.
@@ -247,14 +301,16 @@ validate_target() {
         validate_live_data || return 1
     fi
 
-    apfs_inventory > "$SCRATCH/apfs.plist" || return 1
-    local ci=0 vi ri dev role found=false
+    apfs_inventory > "$SCRATCH/apfs.plist" || { fail 'diskutil cannot list APFS volumes.'; return 1; }
+    local ci=0 vi ri dev role found=false matched=false roles_seen=false
     while plist_get "$SCRATCH/apfs.plist" "Containers:$ci:ContainerReference" >/dev/null; do
         vi=0
         while dev=$(plist_get "$SCRATCH/apfs.plist" "Containers:$ci:Volumes:$vi:DeviceIdentifier"); do
             if [ "$dev" = "$DEVICE_ID" ]; then
+                matched=true
                 ri=0
                 while role=$(plist_get "$SCRATCH/apfs.plist" "Containers:$ci:Volumes:$vi:Roles:$ri"); do
+                    roles_seen=true
                     [ "$role" != Data ] || found=true
                     ri=$((ri + 1))
                 done
@@ -263,6 +319,9 @@ validate_target() {
         done
         ci=$((ci + 1))
     done
+    [ "$ci" -gt 0 ] || { fail 'APFS inventory is empty or unreadable.'; return 1; }
+    [ "$matched" = true ] || { fail 'Selected device is absent from the APFS inventory.'; return 1; }
+    [ "$roles_seen" = true ] || { fail 'Selected device APFS role data is unavailable or empty.'; return 1; }
     [ "$found" = true ] || { fail 'Selected volume does not have APFS Data role.'; return 1; }
     local rel
     for rel in private/etc/hosts private/var/db/.AppleSetupDone \
@@ -289,34 +348,50 @@ build_paths() {
     )
 }
 
-hash_only_preferences() {
-    local xml payload prefix suffix LC_ALL=C
-    # Check the exact key before whitespace normalization of serialized XML.
-    plist_get "$1" MDMServerHash >/dev/null || return 1
-    xml=$(plist_xml "$1") || return 1
-    xml=${xml//[[:space:]]/}
-    prefix='<plistversion="1.0"><dict><key>MDMServerHash</key><data>'
-    suffix='</data></dict></plist>'
-    case "$xml" in *"$prefix"*"$suffix") ;; *) return 1 ;; esac
-    payload=${xml#*"$prefix"}
-    payload=${payload%"$suffix"}
+preferences_body() {
+    local body trailer header compact LC_ALL=C
+    case "$1" in '<?xml version="1.0" encoding="UTF-8"?>'*'<plist version="1.0">'*'</plist>'*) ;; *) return 1 ;; esac
+    header=${1%%'<plist version="1.0">'*}
+    header=${header#'<?xml version="1.0" encoding="UTF-8"?>'}
+    compact=${header//[[:space:]]/}
+    case "$compact" in
+        ''|'<!DOCTYPEplistPUBLIC"-//Apple//DTDPLIST1.0//EN""http://www.apple.com/DTDs/PropertyList-1.0.dtd">') ;;
+        *) return 1 ;;
+    esac
+    body=${1#*'<plist version="1.0">'}
+    trailer=${body#*'</plist>'}
+    [ -z "${trailer//[[:space:]]/}" ] || return 1
+    body=${body%%'</plist>'*}
+    printf '%s' "$body"
+}
+
+recognized_preferences() {
+    local body payload LC_ALL=C
+    local empty_re='^[[:space:]]*<dict[[:space:]]*/>[[:space:]]*$|^[[:space:]]*<dict>[[:space:]]*</dict>[[:space:]]*$'
+    local hash_re='^[[:space:]]*<dict>[[:space:]]*<key>MDMServerHash</key>[[:space:]]*<data>([^<]+)</data>[[:space:]]*</dict>[[:space:]]*$'
+    body=$(preferences_body "$1") || return 1
+    [[ "$body" =~ $empty_re ]] && return 0
+    [[ "$body" =~ $hash_re ]] || return 1
+    payload=${BASH_REMATCH[1]//[[:space:]]/}
     [[ "$payload" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] && [ "$((${#payload} % 4))" -eq 0 ]
 }
 
-empty_preferences() {
-    local xml LC_ALL=C
-    xml=$(plist_xml "$1") || return 1
-    xml=${xml//[[:space:]]/}
-    # PlistBuddy emits either self-closing or paired empty dictionary tags.
-    # Its serializer supplies the XML preamble; the plist body must be empty.
-    case "$xml" in
-        *'<plistversion="1.0"><dict/></plist>'|*'<plistversion="1.0"><dict></dict></plist>') return 0 ;;
-        *) return 1 ;;
+preferences_root_type() {
+    local body
+    body=$(preferences_body "$1") || { printf 'invalid XML wrapper'; return; }
+    body="${body#"${body%%[![:space:]]*}"}"
+    case "$body" in
+        '<dict/>'*) printf 'empty dictionary' ;;
+        '<dict>'*) printf 'dictionary with unsupported fields' ;;
+        '<array'* ) printf 'array' ;;
+        '<string'* ) printf 'string' ;;
+        '<data'* ) printf 'data' ;;
+        *) printf 'other root type' ;;
     esac
 }
 
 validate_profile_store() {
-    local store="$TARGET/private/var/db/ConfigurationProfiles/Store" entry name quoted_name count=0 markers=0
+    local store="$TARGET/private/var/db/ConfigurationProfiles/Store" entry name quoted_name count=0 markers=0 xml
     [ ! -L "$store" ] || { fail 'Profile store symlink refused.'; return 1; }
     [ -e "$store" ] || return 0
     [ -d "$store" ] || { fail 'Profile store is not a directory.'; return 1; }
@@ -331,8 +406,12 @@ validate_profile_store() {
             MCXPrivate.keychain)
                 [ -s "$entry" ] || { fail 'Unexpected empty profile keychain.'; return 1; } ;;
             MDM_ComputerPrefs.plist)
-                hash_only_preferences "$entry" || empty_preferences "$entry" || {
-                    fail 'Unrecognized profile preferences; enrollment status unknown.'; return 1;
+                xml=$(plist_xml "$entry") || {
+                    fail 'Profile preferences XML unavailable from PlistBuddy and plutil; enrollment status unknown.'; return 1;
+                }
+                recognized_preferences "$xml" || {
+                    fail "Unrecognized profile preferences ($(preferences_root_type "$xml")); enrollment status unknown."
+                    return 1;
                 } ;;
             *)
                 [[ "$name" =~ ^\.fl[a-fA-F0-9]{8}$ ]] && [ ! -s "$entry" ] || {
@@ -356,7 +435,11 @@ validate_fresh_install() {
     valid_name "$ADMIN" || { fail 'Admin name: 1–31 lowercase letters/digits/underscores, starting with a letter; root forbidden.'; return 1; }
     [ ! -e "$TARGET/private/var/db/.AppleSetupDone" ] || { fail 'Setup-completion marker exists; this experiment requires it to be absent. The marker alone does not establish enrollment status.'; return 1; }
     # An offline-created account does not automatically acquire a Secure Token.
-    [ "$(plist_get "$SCRATCH/target.plist" FileVault)" = false ] || {
+    local filevault
+    filevault=$(plist_get "$SCRATCH/target.plist" FileVault) || {
+        fail 'Target FileVault state is unavailable from diskutil.'; return 1;
+    }
+    [ "$filevault" = false ] || {
         fail 'New offline accounts on FileVault-enabled/unknown volumes are unsupported.'; return 1;
     }
     build_paths
@@ -365,13 +448,16 @@ validate_fresh_install() {
     [ ! -e "$TARGET/${PATHS[6]}" ] || { fail 'Admin account already exists.'; return 1; }
     # A record can have aliases that differ from its filename. Do not let dscl
     # resolve the requested new name to an existing, unsnapshotted account.
-    local user_file alias index
+    local user_file alias lower_alias index
     for user_file in "$TARGET/private/var/db/dslocal/nodes/Default/users/"*.plist; do
         [ -f "$user_file" ] && [ ! -L "$user_file" ] || { fail 'Invalid existing user record.'; return 1; }
         alias=$(plist_get "$user_file" name:0) || { fail 'Cannot read existing account names.'; return 1; }
         index=0
         while alias=$(plist_get "$user_file" "name:$index"); do
-            [ "$(printf '%s' "$alias" | /usr/bin/tr '[:upper:]' '[:lower:]')" != "$ADMIN" ] || {
+            lower_alias=$(printf '%s' "$alias" | /usr/bin/tr '[:upper:]' '[:lower:]') || {
+                fail 'Cannot normalize an existing account name.'; return 1;
+            }
+            [ "$lower_alias" != "$ADMIN" ] || {
                 fail 'Admin name matches an existing account or alias.'; return 1;
             }
             index=$((index + 1))
@@ -382,28 +468,47 @@ validate_fresh_install() {
     }
     [ -d "$TARGET/Users" ] && [ ! -L "$TARGET/Users" ] || { fail 'Invalid Users directory.'; return 1; }
     validate_profile_store || return 1
-    /usr/bin/grep -Fq "$BEGIN_BLOCK" "$TARGET/private/etc/hosts" && {
-        fail 'A previous lab block exists; restore its snapshot before another apply.'; return 1;
-    }
+    local grep_rc
+    grep_status -Fq "$BEGIN_BLOCK" "$TARGET/private/etc/hosts"
+    grep_rc=$?
+    case "$grep_rc" in
+        0) fail 'A previous lab block exists; restore its snapshot before another apply.'; return 1 ;;
+        1) ;;
+        *) fail 'Cannot read target hosts file to check for a previous lab block.'; return 1 ;;
+    esac
     return 0
 }
 
 validate_backup_parent() {
-    local parent=$1 fs backup_uuid mount_point
-    disk_info "$parent" > "$SCRATCH/backup-volume.plist" || return 1
-    fs=$(plist_get "$SCRATCH/backup-volume.plist" FilesystemType) || return 1
+    local parent=$1 fs backup_uuid mount_point ownership writable
+    disk_info "$parent" > "$SCRATCH/backup-volume.plist" || {
+        fail "diskutil cannot inspect the selected backup location: $parent"; return 1;
+    }
+    fs=$(plist_get "$SCRATCH/backup-volume.plist" FilesystemType) || {
+        fail 'Backup filesystem type is unavailable from diskutil.'; return 1;
+    }
     case "$fs" in apfs|hfs) ;; *) fail 'Backup storage must preserve Unix permissions (APFS/HFS).'; return 1 ;; esac
-    [ "$(plist_get "$SCRATCH/backup-volume.plist" GlobalPermissionsEnabled)" = true ] || {
+    ownership=$(plist_get "$SCRATCH/backup-volume.plist" GlobalPermissionsEnabled) || {
+        fail 'Backup volume ownership status is unavailable from diskutil.'; return 1;
+    }
+    [ "$ownership" = true ] || {
         fail 'Backup volume ownership enforcement must be enabled. See docs/DEPLOYMENT.md.'; return 1;
     }
-    [ "$(plist_get "$SCRATCH/backup-volume.plist" Writable)" = true ] || {
+    writable=$(plist_get "$SCRATCH/backup-volume.plist" Writable) || {
+        fail 'Backup volume writability is unavailable from diskutil.'; return 1;
+    }
+    [ "$writable" = true ] || {
         fail 'Backup volume must be writable.'; return 1;
     }
-    mount_point=$(plist_get "$SCRATCH/backup-volume.plist" MountPoint) || return 1
+    mount_point=$(plist_get "$SCRATCH/backup-volume.plist" MountPoint) || {
+        fail 'Backup volume mount point is unavailable from diskutil.'; return 1;
+    }
     [ -n "$mount_point" ] && [ "$mount_point" != / ] || {
         fail 'Backup cannot reside on the temporary Recovery boot filesystem.'; return 1;
     }
-    backup_uuid=$(plist_get "$SCRATCH/backup-volume.plist" VolumeUUID) || return 1
+    backup_uuid=$(plist_get "$SCRATCH/backup-volume.plist" VolumeUUID) || {
+        fail 'Backup volume UUID is unavailable from diskutil.'; return 1;
+    }
     valid_uuid "$backup_uuid" || { fail 'Cannot verify backup volume identity.'; return 1; }
     [ "$backup_uuid" != "$VOLUME_UUID" ] || {
         fail 'Use a different persistent volume for the backup.'; return 1;
@@ -421,22 +526,22 @@ prepare_backup() {
     BACKUP="$parent/$base"
     case "$BACKUP/" in "$TARGET/"*) fail 'Backup must be outside the target.'; return 1 ;; esac
     validate_backup_parent "$parent" || return 1
-    /bin/mkdir -m 700 "$BACKUP" || return 1
-    printf '%s\n' 1 > "$BACKUP/format" || return 1
-    printf '%s\n' "$VOLUME_UUID" > "$BACKUP/volume-uuid" || return 1
-    printf '%s\n' "$ADMIN" > "$BACKUP/admin-name" || return 1
+    /bin/mkdir -m 700 "$BACKUP" || { fail 'Cannot create the backup directory.'; return 1; }
+    printf '%s\n' 1 > "$BACKUP/format" || { fail 'Cannot write backup format metadata.'; return 1; }
+    printf '%s\n' "$VOLUME_UUID" > "$BACKUP/volume-uuid" || { fail 'Cannot write backup volume identity.'; return 1; }
+    printf '%s\n' "$ADMIN" > "$BACKUP/admin-name" || { fail 'Cannot write backup account metadata.'; return 1; }
     local i=0 src sum
     for src in "${PATHS[@]}"; do
         if [ -f "$TARGET/$src" ]; then
-            /bin/cp -p "$TARGET/$src" "$BACKUP/$i.original" || return 1
-            sum=$(digest "$BACKUP/$i.original") || return 1
-            printf '%s\n' "$sum" > "$BACKUP/$i.before" || return 1
+            /bin/cp -p "$TARGET/$src" "$BACKUP/$i.original" || { fail "Cannot copy managed file into backup: $src"; return 1; }
+            sum=$(digest "$BACKUP/$i.original") || { fail "Cannot hash backup copy: $src"; return 1; }
+            printf '%s\n' "$sum" > "$BACKUP/$i.before" || { fail "Cannot write backup checksum: $src"; return 1; }
         else
-            printf '%s\n' absent > "$BACKUP/$i.before" || return 1
+            printf '%s\n' absent > "$BACKUP/$i.before" || { fail "Cannot record absent file in backup: $src"; return 1; }
         fi
         i=$((i + 1))
     done
-    printf '%s\n' snapshot-complete > "$BACKUP/state" || return 1
+    printf '%s\n' snapshot-complete > "$BACKUP/state" || { fail 'Cannot mark the backup snapshot complete.'; return 1; }
 }
 
 acquire_lock() {
@@ -448,7 +553,7 @@ acquire_lock() {
 }
 
 choose_uid() {
-    local node="$TARGET/private/var/db/dslocal/nodes/Default" file uid candidate=501
+    local node="$TARGET/private/var/db/dslocal/nodes/Default" file uid candidate=501 grep_rc
     : > "$SCRATCH/uids" || return 1
     for file in "$node/users/"*.plist; do
         [ -f "$file" ] && [ ! -L "$file" ] || { fail 'Unreadable/symlinked user record.'; return 1; }
@@ -457,9 +562,13 @@ choose_uid() {
         printf '%s\n' "$uid" >> "$SCRATCH/uids" || return 1
     done
     while [ "$candidate" -le 599 ]; do
-        if ! /usr/bin/grep -qx "$candidate" "$SCRATCH/uids"; then
-            printf '%s\n' "$candidate"; return 0
-        fi
+        grep_status -qx "$candidate" "$SCRATCH/uids"
+        grep_rc=$?
+        case "$grep_rc" in
+            0) ;;
+            1) printf '%s\n' "$candidate"; return 0 ;;
+            *) fail 'Cannot read existing UID inventory; account creation stopped.'; return 1 ;;
+        esac
         candidate=$((candidate + 1))
     done
     fail 'No free UID in 501–599; refusing to reuse one.'
@@ -570,13 +679,14 @@ restore_snapshot() {
 }
 
 apply_transaction() {
-    prepare_backup || return 1
+    require_apply_tools || { log 'BLOCKED [A01] Required account/file utilities are unavailable; no target files changed.'; return 1; }
+    prepare_backup || { log 'BLOCKED [A02] Backup preparation failed; no target files changed.'; return 1; }
     TRANSACTION=true
-    create_admin || return 1
-    replace_hosts || return 1
-    write_markers || return 1
-    verify_local || return 1
-    record_after || return 1
+    create_admin || { log 'BLOCKED [A03] Account creation failed; rollback will run.'; return 1; }
+    replace_hosts || { log 'BLOCKED [A04] Hosts update failed; rollback will run.'; return 1; }
+    write_markers || { log 'BLOCKED [A05] Setup marker update failed; rollback will run.'; return 1; }
+    verify_local || { log 'BLOCKED [A06] Local verification failed; rollback will run.'; return 1; }
+    record_after || { log 'BLOCKED [A07] Backup finalization failed; rollback will run.'; return 1; }
     TRANSACTION=false
     log "Changes staged; backup: $BACKUP"
     log 'Hardware result: NOT TESTED. Reboot manually when ready and follow docs/TESTING.md.'
@@ -653,28 +763,33 @@ main() {
         volumes) /usr/sbin/diskutil apfs list; return $? ;;
         status) running_status; return $? ;;
     esac
-    init_scratch || return 1
+    require_plan_tools || return 1
+    init_scratch || { fail 'Cannot create a private temporary workspace under /tmp.'; return 1; }
     trap cleanup EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
     trap 'exit 129' HUP
-    validate_target || return 1
+    validate_target || { log 'BLOCKED [T01] Target mount, identity, or APFS Data-role check.'; return 1; }
     case "$command" in
         plan|apply)
-            validate_fresh_install || return 1
+            validate_fresh_install || {
+                log 'BLOCKED [T02] Fresh-install, account, or profile-store preflight.'; return 1;
+            }
             log "Target: $TARGET (APFS Data, $DEVICE_ID)"
             log "Plan: create admin '$ADMIN'; add three enrollment-domain entries; change four enrollment markers and setup-completion state."
             log 'No compatibility claim is made until device testing.'
             if [ "$command" = plan ]; then return 0; fi
-            require_recovery || return 1
+            require_recovery || { log 'BLOCKED [A00] Recovery environment check.'; return 1; }
+            require_apply_tools || { log 'BLOCKED [A01] Required account/file utilities are unavailable; no target files changed.'; return 1; }
             [ -t 0 ] && [ -t 1 ] || { fail 'An interactive terminal is required for password entry.'; return 1; }
             acquire_lock || return 1
             apply_transaction || return 1 ;;
-        verify) verify_local || return 1 ;;
+        verify) verify_local || { log 'BLOCKED [V01] Local file verification.'; return 1; } ;;
         restore)
-            require_recovery || return 1
+            require_recovery || { log 'BLOCKED [R00] Recovery environment check.'; return 1; }
+            require_restore_tools || { log 'BLOCKED [R00] Required restore utilities are unavailable.'; return 1; }
             acquire_lock || return 1
-            load_backup || return 1
+            load_backup || { log 'BLOCKED [R01] Backup integrity or changed target files.'; return 1; }
             restore_snapshot || {
                 fail "Restore incomplete. Keep the device in Recovery; backup and lock retained: $BACKUP; $LOCK"
                 LOCK=''

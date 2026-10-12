@@ -1,8 +1,8 @@
 #!/bin/bash
 # Interactive download launcher. The core release and checksum are fixed.
-CORE_VERSION=0.1.7-rc1
-CORE_URL=https://github.com/Sin-OP/mac-enrollment-lab/releases/download/v0.1.7-rc1/enrollment-lab.sh
-CORE_SHA=ad6295cae0a8ce7932addabfac2baa88ce2fd98cd17a8c05fe00886478ede31c
+CORE_VERSION=0.1.8-rc1
+CORE_URL=https://github.com/Sin-OP/mac-enrollment-lab/releases/download/v0.1.8-rc1/enrollment-lab.sh
+CORE_SHA=deee18f3539078533ba9f0a897c0554af540802b6ccd7c04105ac0995e63024f
 LAB_TMP=''
 CORE=''
 CHOICES=()
@@ -84,7 +84,36 @@ sha256_bash() (
 
 say() { printf '%s\n' "$*" >&2; }
 reply() { IFS= read -r "$1" </dev/tty; }
-fetch_core() { /usr/bin/curl -fL --connect-timeout 15 --max-time 120 "$CORE_URL" -o "$CORE"; }
+launcher_curl() { /usr/bin/curl "$@"; }
+fetch_core() {
+    local rc
+    if launcher_curl -4fL --connect-timeout 12 --max-time 45 \
+        --retry 1 --retry-delay 2 --retry-max-time 90 "$CORE_URL" -o "$CORE"; then
+        return 0
+    else
+        rc=$?
+    fi
+    case "$rc" in
+        6|7|28)
+            say 'IPv4 route unavailable; trying the standard network route.'
+            /bin/rm -f "$CORE" || return 23
+            launcher_curl -fL --connect-timeout 12 --max-time 45 \
+                --retry 1 --retry-delay 2 --retry-max-time 90 "$CORE_URL" -o "$CORE"
+            ;;
+        *) return "$rc" ;;
+    esac
+}
+explain_curl_error() {
+    case "$1" in
+        6) say 'DNS lookup failed. Check the network connection and host name.' ;;
+        7) say 'Could not connect to the download host. Check the network connection.' ;;
+        22) say 'The release URL returned an HTTP error. Check that this version is published.' ;;
+        23) say 'Could not write the download. Check that temporary storage is writable and has space.' ;;
+        28) say 'The download timed out. Check the connection and try again.' ;;
+        35|60) say 'TLS verification or negotiation failed. Check the Mac date and network trust.' ;;
+        *) say 'The download did not complete. Check the curl error above.' ;;
+    esac
+}
 launcher_openssl() { /usr/bin/openssl dgst -sha256 "$CORE"; }
 launcher_shasum() { /usr/bin/shasum -a 256 "$CORE"; }
 core_hash() {
@@ -103,7 +132,13 @@ core_hash() {
 
 download_verified_core() {
     say "Downloading fixed core release $CORE_VERSION..."
-    fetch_core || { say 'Download failed. Nothing will run.'; return 1; }
+    local rc
+    fetch_core || {
+        rc=$?
+        say "Core download failed (curl exit $rc). The core was not run."
+        explain_curl_error "$rc"
+        return 1
+    }
     local hash
     hash=$(core_hash) || { say 'Cannot verify SHA-256. Stopping.'; return 1; }
     [ "$hash" = "$CORE_SHA" ] || { say 'Checksum mismatch. Nothing will run.'; return 1; }
@@ -129,7 +164,7 @@ collect_volumes() {
 # UI text goes to stderr; the selected path is the only stdout value.
 choose() {
     local title=$1 index=0 answer
-    [ "${#CHOICES[@]}" -gt 0 ] || { say 'No matching mounted volumes or backups found.'; return 1; }
+    [ "${#CHOICES[@]}" -gt 0 ] || { say 'No matching mounted volumes or backups found.'; return 2; }
     say "$title"
     for answer in "${CHOICES[@]}"; do
         index=$((index + 1))
@@ -137,7 +172,7 @@ choose() {
     done
     while true; do
         say 'Enter a number, or q to cancel:'
-        reply answer || return 1
+        reply answer || return 3
         case "$answer" in q|Q) return 1 ;; esac
         if [[ "$answer" =~ ^[1-9][0-9]{0,3}$ ]] && [ "$answer" -le "${#CHOICES[@]}" ]; then
             printf '%s\n' "${CHOICES[$((answer - 1))]}"
@@ -155,8 +190,8 @@ choose_target() {
 choose_backup() {
     local target=$1 selected
     collect_volumes
-    selected=$(choose 'Select the separate backup volume (APFS/HFS, ownership enabled):') || return 1
-    [ "$selected" != "$target" ] || { say 'The target cannot also be the backup volume.'; return 1; }
+    selected=$(choose 'Select the separate backup volume (APFS/HFS, ownership enabled):') || return $?
+    [ "$selected" != "$target" ] || { say 'The target cannot also be the backup volume.'; return 2; }
     printf '%s\n' "$selected/enrollment-lab-backup-$(/bin/date +%Y%m%d-%H%M%S)-$$"
 }
 
@@ -171,20 +206,45 @@ find_backups() {
 }
 
 guided_apply() {
-    local target admin backup answer
-    target=$(choose_target) || return 1
+    local target admin backup answer rc
+    target=$(choose_target) || {
+        rc=$?
+        if [ "$rc" -eq 1 ]; then say 'Preview cancelled before changes.'; return 0; fi
+        say "Preview could not start (selection exit $rc). No changes made."
+        return "$rc"
+    }
     say 'New lab account name (Enter for labadmin):'
-    reply admin || return 1
+    reply admin || { say 'Preview stopped: could not read the account name.'; return 1; }
     admin=${admin:-labadmin}
-    run_core plan --data-volume "$target" --create-admin "$admin" || return 1
-    backup=$(choose_backup "$target") || return 1
+    say 'Stage: read-only preview.'
+    run_core plan --data-volume "$target" --create-admin "$admin" || {
+        rc=$?
+        say "PREVIEW BLOCKED (exit $rc). No installation changes were made."
+        return "$rc"
+    }
+    say 'PREVIEW PASSED. No installation changes were made.'
+    say 'Continue to backup selection and apply? Type Y, or press Enter to stop after preview:'
+    reply answer || { say 'Preview finished; apply was not requested.'; return 0; }
+    case "$answer" in Y|y) ;; *) say 'Preview finished; apply was not requested.'; return 0 ;; esac
+    backup=$(choose_backup "$target") || {
+        rc=$?
+        if [ "$rc" -eq 1 ]; then say 'Apply cancelled before changes.'; return 0; fi
+        say "Backup selection blocked (exit $rc). No changes made."
+        return "$rc"
+    }
     say "Target: $target"
     say "New account: $admin"
     say "Backup: $backup"
     say 'Type APPLY to make these changes, or press Enter to cancel:'
-    reply answer || return 1
-    [ "$answer" = APPLY ] || { say 'Cancelled.'; return 1; }
-    run_core apply --data-volume "$target" --create-admin "$admin" --backup-dir "$backup"
+    reply answer || { say 'Apply cancelled before changes.'; return 0; }
+    [ "$answer" = APPLY ] || { say 'Apply cancelled before changes.'; return 0; }
+    say 'Stage: apply with backup and rollback checks.'
+    run_core apply --data-volume "$target" --create-admin "$admin" --backup-dir "$backup" || {
+        rc=$?
+        say "APPLY FAILED (exit $rc). Check the rollback result above before proceeding."
+        return "$rc"
+    }
+    say 'Apply completed. Verify local files with menu option 2 before reboot.'
 }
 
 guided_verify() {
@@ -219,7 +279,10 @@ launcher_main() {
     export PATH=/usr/bin:/bin:/usr/sbin:/sbin
     launcher_is_macos || { say 'This launcher requires macOS.'; return 1; }
     [ -t 0 ] && [ -t 1 ] || { say 'Run from an interactive Terminal.'; return 1; }
-    LAB_TMP=$(/usr/bin/mktemp -d /tmp/enrollment-lab-menu.XXXXXXXX) || return 1
+    LAB_TMP=$(/usr/bin/mktemp -d /tmp/enrollment-lab-menu.XXXXXXXX) || {
+        say 'Cannot create temporary storage under /tmp in Recovery.'
+        return 1
+    }
     trap launcher_cleanup EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
@@ -239,7 +302,7 @@ launcher_main() {
         say 'q) Quit'
         reply action || return 1
         case "$action" in
-            1) guided_apply || say 'Operation cancelled or failed; see the message above.' ;;
+            1) guided_apply ;;
             2) guided_verify || say 'Local verification did not pass.' ;;
             3) guided_restore || say 'Restore cancelled or failed; retain the backup.' ;;
             4) run_core volumes || say 'Volume listing failed.' ;;

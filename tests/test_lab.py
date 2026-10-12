@@ -129,6 +129,7 @@ build_paths
     def test_no_failure_is_reported_as_success(self):
         r = self.run_bash("write_markers() { return 23; }; apply_transaction", transaction_cleanup=True)
         self.assertNotEqual(r.returncode, 0)
+        self.assertIn('BLOCKED [A05]', r.stderr)
         self.assertIn("restored", r.stderr)
         self.assertNotIn("Changes staged", r.stderr)
         self.assertEqual(self.capture(), self.before)
@@ -153,6 +154,36 @@ apply_transaction
         self.backup.mkdir()
         r = self.run_bash("apply_transaction", transaction_cleanup=True)
         self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(self.capture(), self.before)
+
+    def test_missing_apply_utility_stops_before_backup_or_mutation(self):
+        r = self.run_bash('''
+require_executable() {
+    [ "$1" != /usr/bin/uuidgen ] || { fail "Required Recovery utility unavailable: $1"; return 1; }
+}
+apply_transaction
+''', transaction_cleanup=True)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('Required Recovery utility unavailable: /usr/bin/uuidgen', r.stderr)
+        self.assertIn('BLOCKED [A01]', r.stderr)
+        self.assertFalse(self.backup.exists())
+        self.assertEqual(self.capture(), self.before)
+
+    def test_main_checks_rollback_utility_before_creating_target_lock(self):
+        r = self.run_bash('''
+require_plan_tools() { return 0; }
+validate_target() { return 0; }
+validate_fresh_install() { return 0; }
+require_recovery() { return 0; }
+require_executable() {
+    [ "$1" != /bin/rmdir ] || { fail "Required Recovery utility unavailable: $1"; return 1; }
+}
+main apply --data-volume "$TARGET" --create-admin "$ADMIN" --backup-dir "$BACKUP"
+''')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('BLOCKED [A01]', r.stderr)
+        self.assertFalse((self.target / 'private/var/db/mac-enrollment-lab.lock').exists())
+        self.assertFalse(self.backup.exists())
         self.assertEqual(self.capture(), self.before)
 
     def test_target_drift_prevents_restore(self):
@@ -237,6 +268,18 @@ load_backup
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("FileVault", r.stderr)
 
+    def test_missing_filevault_state_has_specific_error(self):
+        self.write_plist(self.scratch / 'target.plist', {})
+        r = self.run_bash('validate_fresh_install')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('FileVault state is unavailable', r.stderr)
+
+    def test_hosts_read_error_is_not_treated_as_no_prior_block(self):
+        r = self.run_bash('grep_status() { return 2; }; validate_fresh_install')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('Cannot read target hosts file', r.stderr)
+        self.assertEqual(self.capture(), self.before)
+
     def test_configured_profile_store_rejected(self):
         store = self.settings.parent / "Store"
         store.mkdir()
@@ -293,6 +336,44 @@ load_backup
         self.assert_ok(r)
         self.assertEqual(self.capture(), snapshot)
 
+    def test_plistbuddy_non_xml_falls_back_to_plutil(self):
+        self.make_observed_profile_store()
+        r = self.run_bash("plistbuddy_xml() { printf 'Dict { plain output }'; }; "
+                          "validate_profile_store")
+        self.assert_ok(r)
+        self.assertIn('Enrollment status remains UNKNOWN', r.stderr)
+
+    def test_xml_looking_plain_output_is_not_treated_as_valid_xml(self):
+        self.make_observed_profile_store()
+        for placement in ['prefix', 'suffix']:
+            with self.subTest(placement=placement):
+                if placement == 'prefix':
+                    fake = "printf 'NOT XML'; /usr/bin/plutil -convert xml1 -o - \"$1\""
+                else:
+                    fake = "/usr/bin/plutil -convert xml1 -o - \"$1\"; printf 'NOT XML'"
+                r = self.run_bash(f'plistbuddy_xml() {{ {fake}; }}; '
+                                  'plutil_xml() { return 1; }; validate_profile_store')
+                self.assertNotEqual(r.returncode, 0)
+                self.assertIn('XML unavailable', r.stderr)
+
+    def test_unavailable_profile_xml_reports_specific_block_without_values(self):
+        store = self.make_observed_profile_store()
+        self.write_plist(store / 'MDM_ComputerPrefs.plist',
+                         {'MDMServerHash': b'private-server-hash'})
+        r = self.run_bash('plistbuddy_xml() { return 1; }; plutil_xml() { return 1; }; '
+                          'validate_profile_store')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('XML unavailable from PlistBuddy and plutil', r.stderr)
+        self.assertNotIn('private-server-hash', r.stdout + r.stderr)
+
+    def test_unsupported_preferences_report_root_without_values(self):
+        store = self.make_observed_profile_store()
+        self.write_plist(store / 'MDM_ComputerPrefs.plist', {'Extra': 'private-value'})
+        r = self.run_bash('validate_profile_store')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('dictionary with unsupported fields', r.stderr)
+        self.assertNotIn('private-value', r.stdout + r.stderr)
+
     def test_populated_profile_databases_rejected(self):
         store = self.make_observed_profile_store()
         for name in ['ConfigProfiles.binary', 'Provisioning.binary']:
@@ -321,7 +402,7 @@ load_backup
         (store / 'MDM_ComputerPrefs.plist').write_bytes(b'not a plist')
         r = self.run_bash('validate_profile_store')
         self.assertNotEqual(r.returncode, 0)
-        self.assertIn('Unrecognized profile preferences', r.stderr)
+        self.assertIn('XML unavailable', r.stderr)
 
     def test_unexpected_hidden_profile_file_rejected(self):
         store = self.make_observed_profile_store()
@@ -377,6 +458,12 @@ load_backup
         self.assert_ok(r)
         self.assertEqual(r.stdout, "503\n")
 
+    def test_uid_inventory_read_error_never_selects_a_uid(self):
+        r = self.run_bash('grep_status() { return 2; }; choose_uid')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(r.stdout, '')
+        self.assertIn('Cannot read existing UID inventory', r.stderr)
+
     def test_uid_exhaustion_never_reuses_501(self):
         for uid in range(501, 600):
             self.write_plist(self.node / f"users/u{uid}.plist", {"uid": [str(uid)]})
@@ -402,6 +489,34 @@ load_backup
         r = self.run_bash("validate_target")
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("Data role", r.stderr)
+
+    def test_missing_target_uuid_has_specific_error(self):
+        del self.volume_info['VolumeUUID']
+        self.write_plist(self.root / 'disk-info.plist', self.volume_info)
+        r = self.run_bash('validate_target')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('Target VolumeUUID is unavailable', r.stderr)
+
+    def test_unreadable_apfs_inventory_is_not_wrong_role(self):
+        self.write_plist(self.root / 'inventory.plist', {})
+        r = self.run_bash('validate_target')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('APFS inventory is empty or unreadable', r.stderr)
+
+    def test_target_device_absent_from_inventory_has_specific_error(self):
+        self.inventory['Containers'][0]['Volumes'][0]['DeviceIdentifier'] = 'disk8s1'
+        self.write_plist(self.root / 'inventory.plist', self.inventory)
+        r = self.run_bash('validate_target')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('Selected device is absent', r.stderr)
+
+    def test_missing_role_metadata_is_unknown_not_wrong_role(self):
+        del self.inventory['Containers'][0]['Volumes'][0]['Roles']
+        self.write_plist(self.root / 'inventory.plist', self.inventory)
+        r = self.run_bash('validate_target')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('APFS role data is unavailable or empty', r.stderr)
+        self.assertNotIn('does not have APFS Data role', r.stderr)
 
     def test_role_is_matched_by_device_not_first_volume(self):
         self.inventory["Containers"][0]["Volumes"].insert(0, {
@@ -576,6 +691,16 @@ validate_fresh_install && apply_transaction && load_backup && restore_snapshot
                 self.write_plist(self.root / "disk-info.plist", dict(base, **changes))
                 r = self.run_bash('validate_backup_parent "$SCRATCH"', real_backup_validation=True)
                 self.assertEqual(r.returncode == 0, expected, r.stderr)
+
+    def test_missing_backup_ownership_metadata_is_reported(self):
+        self.write_plist(self.root / 'disk-info.plist', {
+            'FilesystemType': 'apfs', 'Writable': True,
+            'MountPoint': '/Volumes/LABUSB',
+            'VolumeUUID': 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        })
+        r = self.run_bash('validate_backup_parent "$SCRATCH"', real_backup_validation=True)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('ownership status is unavailable', r.stderr)
 
 
 if __name__ == "__main__":
