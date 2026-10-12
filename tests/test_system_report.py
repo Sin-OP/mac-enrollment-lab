@@ -127,6 +127,162 @@ Locked: No
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('target.parse\tUNKNOWN\t', (self.report / 'checks.tsv').read_text())
 
+    def test_architecture_evidence_matrix(self):
+        cases = [
+            ('arm64', '1', '0', '', 'Apple silicon'),
+            ('arm64', '', '', '', 'Apple silicon'),
+            ('x86_64', '0', '', '', 'Intel'),
+            ('x86_64', '', '', 'GenuineIntel', 'Intel'),
+            ('x86_64', '1', '1', '', 'Apple silicon'),
+            ('x86_64', '', '1', '', 'Apple silicon'),
+            ('x86_64', '', '', '', 'UNKNOWN'),
+            ('arm64', '0', '0', '', 'UNKNOWN'),
+            ('arm64', '1', '1', '', 'UNKNOWN'),
+            ('arm64', '1', '0', 'GenuineIntel', 'UNKNOWN'),
+            ('unknown', '', '', '', 'UNKNOWN'),
+        ]
+        for arch, capability, translated, vendor, family in cases:
+            with self.subTest(arch=arch, capability=capability, translated=translated, vendor=vendor):
+                args = ' '.join(shlex.quote(v) for v in (arch, capability, translated, vendor))
+                result = self.run_shell(f'sr_architecture {args}; printf "%s" "$SR_HARDWARE_FAMILY"')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, family)
+
+    def test_plist_reader_falls_back_when_recovery_tool_is_missing(self):
+        result = self.run_shell('''
+sr_probe() {
+    SR_OUTPUT="$SR_WORK/raw"
+    SR_RC=0; SR_STATUS=OK
+    case "$1" in
+        *.PlistBuddy) SR_RC=127; SR_STATUS=UNAVAILABLE; : > "$SR_OUTPUT" ;;
+        *.plutil) printf '14.4\n' > "$SR_OUTPUT" ;;
+    esac
+    sr_record "$1" "$2" "$SR_STATUS" "$SR_RC" 0
+}
+sr_plist_os_value target.version Version ProductVersion /fixture/SystemVersion.plist
+printf '%s' "$SR_VALUE"
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, '14.4')
+        rows = (self.report / 'checks.tsv').read_text()
+        self.assertIn('target.version.PlistBuddy\tUNAVAILABLE', rows)
+        self.assertIn('target.version.plutil\tOK', rows)
+        self.assertNotIn('unresolved', rows)
+
+    def test_unusable_plist_values_remain_unknown_after_both_readers(self):
+        result = self.run_shell('''
+sr_probe() {
+    SR_OUTPUT="$SR_WORK/raw"
+    printf 'not a version\n' > "$SR_OUTPUT"
+    SR_STATUS=OK; SR_RC=0
+    sr_record "$1" "$2" OK 0 0
+}
+sr_plist_os_value target.version Version ProductVersion /fixture/SystemVersion.plist
+printf '%s' "$SR_VALUE"
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, '')
+        rows = (self.report / 'checks.tsv').read_text()
+        self.assertIn('target.version.PlistBuddy.parse\tUNKNOWN', rows)
+        self.assertIn('target.version.plutil.parse\tUNKNOWN', rows)
+        self.assertIn('target.version.unresolved\tUNKNOWN', rows)
+
+    def test_running_os_falls_back_and_keeps_version_and_build_separate(self):
+        result = self.run_shell('''
+sr_probe() {
+    SR_OUTPUT="$SR_WORK/raw"
+    SR_STATUS=OK; SR_RC=0
+    case "$1" in
+        boot.os.version|boot.os.build) SR_STATUS=UNAVAILABLE; SR_RC=127; : > "$SR_OUTPUT" ;;
+        boot.os.version.*) printf '26.0.1\n' > "$SR_OUTPUT" ;;
+        boot.os.build.*) printf '25A362\n' > "$SR_OUTPUT" ;;
+    esac
+    sr_record "$1" "$2" "$SR_STATUS" "$SR_RC" 0
+}
+sr_running_os
+printf '%s' "$SR_RUNNING_VERSION"
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, '26.0.1')
+        report = (self.report / 'report.txt').read_text()
+        self.assertIn('ProductVersion: 26.0.1', report)
+        self.assertIn('ProductBuildVersion: 25A362', report)
+
+    def test_os_metadata_formats_do_not_imply_a_version_support_ceiling(self):
+        for version in ['10.12.6', '10.15.7', '11.7.10', '14.4', '15.0', '26.0.1', '99.1']:
+            with self.subTest(version=version):
+                result = self.run_shell(f'sr_os_value_valid ProductVersion {version}')
+                self.assertEqual(result.returncode, 0, result.stderr)
+        for value in ['', 'Sonoma', '14.x', '14.4 extra']:
+            with self.subTest(invalid=value):
+                self.assertNotEqual(self.run_shell(
+                    f'sr_os_value_valid ProductVersion {shlex.quote(value)}').returncode, 0)
+
+    def test_old_os_skips_commands_that_did_not_exist_yet(self):
+        result = self.run_shell('''
+sr_probe() { echo SHOULD_NOT_RUN >&2; return 9; }
+SR_RUNNING_VERSION=10.12.6
+sr_root_policy
+sr_apfs_inventory
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('SHOULD_NOT_RUN', result.stderr)
+        rows = (self.report / 'checks.tsv').read_text()
+        self.assertIn('security.seal\tSKIPPED', rows)
+        self.assertIn('storage.roles\tSKIPPED', rows)
+
+    def test_new_or_unknown_os_still_attempts_capability_probes(self):
+        for version in ['11.0', '14.4', '26.0', '99.0', '']:
+            with self.subTest(version=version):
+                result = self.run_shell(f'''
+sr_probe() {{ SR_STATUS=UNAVAILABLE; printf '%s\n' "$1"; }}
+SR_RUNNING_VERSION={shlex.quote(version)}
+sr_root_policy
+sr_apfs_inventory
+''')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.splitlines(), ['security.seal', 'storage.roles'])
+
+    def test_capacity_allows_spaces_in_filesystem_and_mount_names(self):
+        raw = self.work / 'capacity'
+        for row, capacity in [
+            ('map auto_home 0 0 0 100% /System/Volumes/Data/home', '0 / 0 / 0'),
+            ('/dev/disk3s1 100 40 60 40% /Volumes/Data One', '100 / 40 / 60'),
+            ('/dev/disk3s1 100 40 60 40% /Volumes/Mount 1 2 3 4% extra', '100 / 40 / 60'),
+        ]:
+            with self.subTest(row=row):
+                (self.report / 'report.txt').write_text('')
+                raw.write_text('Filesystem 1024-blocks Used Available Capacity Mounted on\n' + row + '\n')
+                result = self.run_shell(f'SR_OUTPUT={shlex.quote(str(raw))}; sr_space capacity')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(capacity, (self.report / 'report.txt').read_text())
+                self.assertFalse((self.report / 'checks.tsv').exists())
+
+    def test_hfs_and_apfs_metadata_are_reported_without_assuming_roles(self):
+        raw = self.work / 'disk'
+        for filesystem in ['Journaled HFS+', 'APFS']:
+            with self.subTest(filesystem=filesystem):
+                raw.write_text(f'File System Personality: {filesystem}\nVolume Read-Only: No\n')
+                result = self.run_shell(f'SR_OUTPUT={shlex.quote(str(raw))}; sr_disk_fields target')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(filesystem, (self.report / 'report.txt').read_text())
+                self.assertFalse((self.report / 'checks.tsv').exists())
+
+    def test_mount_without_system_plist_is_explicit_and_does_not_run_readers(self):
+        result = self.run_shell(f'''
+sr_probe() {{ echo SHOULD_NOT_RUN >&2; return 9; }}
+sr_os_file selected {shlex.quote(str(self.root))}
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('SHOULD_NOT_RUN', result.stderr)
+        self.assertIn('selected.metadata\tSKIPPED', (self.report / 'checks.tsv').read_text())
+
+    def test_non_macos_is_rejected_before_creating_report(self):
+        result = self.run_shell(f'OSTYPE=linux-gnu; system_report_main --no-network --output-parent {shlex.quote(str(self.root))}')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('for macOS and macOS Recovery', result.stderr)
+        self.assertEqual(list(self.root.glob('mac-support.*')), [])
+
     def test_network_success_without_http_code_is_unknown(self):
         result = self.run_shell('''
 sr_probe() {

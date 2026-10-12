@@ -1,7 +1,7 @@
 #!/bin/bash
 # Standalone, read-only macOS/Recovery diagnostics. Requires Bash 3.2.
 # Only new report files are written; no installation configuration is changed.
-SYSTEM_REPORT_VERSION=1.0.0
+SYSTEM_REPORT_VERSION=1.1.0
 SR_DIR=''
 SR_WORK=''
 SR_ACTIVE_PID=''
@@ -14,6 +14,10 @@ SR_UNAVAILABLE=0
 SR_UNKNOWN=0
 SR_SEQUENCE=0
 SR_WRITE_FAILED=false
+SR_VALUE=''
+SR_RUNNING_VERSION=''
+SR_HARDWARE_FAMILY=UNKNOWN
+SR_PROCESS_ARCH=UNKNOWN
 SR_VOLUMES=()
 
 sr_say() { printf '%s\n' "$*" >&2; }
@@ -110,12 +114,79 @@ sr_first_line() {
 sr_scalar() {
     local id=$1 title=$2 value
     shift 2
+    SR_VALUE=''
     sr_probe "$id" "$title" "$@" || return 1
     if [ "$SR_STATUS" = OK ]; then
         value=$(sr_first_line)
-        if [ -n "$value" ]; then sr_field "$title" "$value"
+        if [ -n "$value" ]; then SR_VALUE=$value; sr_field "$title" "$value"
         else sr_record "$id.parse" 'Command returned no value' UNKNOWN 0 0; fi
     fi
+}
+sr_architecture() {
+    local arch=$1 arm64=$2 translated=$3 vendor=${4:-}
+    SR_HARDWARE_FAMILY=UNKNOWN
+    SR_PROCESS_ARCH=UNKNOWN
+    case "$arch" in arm64|aarch64|x86_64|i386) SR_PROCESS_ARCH=$arch ;; esac
+    if { [ "$arm64" = 0 ] && { [ "$translated" = 1 ] || [ "$arch" = arm64 ] || [ "$arch" = aarch64 ]; }; } ||
+        { [ "$translated" = 1 ] && { [ "$arch" = arm64 ] || [ "$arch" = aarch64 ]; }; } ||
+        { [ "$vendor" = GenuineIntel ] && { [ "$arm64" = 1 ] || [ "$translated" = 1 ] || [ "$arch" = arm64 ] || [ "$arch" = aarch64 ]; }; }; then
+        sr_record platform.architecture 'Contradictory architecture evidence' UNKNOWN 0 0 || return 1
+    elif [ "$arm64" = 1 ] || [ "$translated" = 1 ] || [ "$arch" = arm64 ] || [ "$arch" = aarch64 ]; then
+        SR_HARDWARE_FAMILY='Apple silicon'
+    elif { [ "$arm64" = 0 ] || [ "$vendor" = GenuineIntel ]; } && { [ "$arch" = x86_64 ] || [ "$arch" = i386 ]; }; then
+        SR_HARDWARE_FAMILY=Intel
+    else
+        sr_record platform.architecture 'Insufficient hardware architecture evidence' UNKNOWN 0 0 || return 1
+    fi
+    sr_field 'Hardware family from available evidence' "$SR_HARDWARE_FAMILY" || return 1
+    sr_field 'Process-visible architecture' "$SR_PROCESS_ARCH" || return 1
+    case "$translated" in
+        1) sr_field 'Process translation interpretation' 'Running under Rosetta' ;;
+        0) sr_field 'Process translation interpretation' 'Translation flag is zero' ;;
+        *) sr_field 'Process translation interpretation' 'UNKNOWN: flag unavailable or unrecognized' ;;
+    esac
+}
+sr_platform() {
+    local arch arm64 translated vendor=''
+    sr_scalar hardware.arch 'Process-visible machine architecture' /usr/bin/uname -m || return 1
+    arch=$SR_VALUE
+    sr_scalar hardware.arm64 'Hardware arm64 capability' /usr/sbin/sysctl -n hw.optional.arm64 || return 1
+    arm64=$SR_VALUE
+    sr_scalar hardware.translated 'Process translation flag' /usr/sbin/sysctl -n sysctl.proc_translated || return 1
+    translated=$SR_VALUE
+    if { [ "$arch" = x86_64 ] || [ "$arch" = i386 ]; } && [ "$arm64" != 1 ] && [ "$translated" != 1 ]; then
+        sr_scalar hardware.vendor 'Kernel-reported CPU vendor' /usr/sbin/sysctl -n machdep.cpu.vendor || return 1
+        vendor=$SR_VALUE
+    fi
+    sr_architecture "$arch" "$arm64" "$translated" "$vendor"
+}
+sr_os_value_valid() {
+    case "$1" in
+        ProductVersion) [[ "$2" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]] ;;
+        ProductBuildVersion) [[ "$2" =~ ^[A-Za-z0-9.]{1,30}$ ]] ;;
+        *) return 1 ;;
+    esac
+}
+sr_plist_os_value() {
+    local id=$1 title=$2 key=$3 path=$4 reader
+    SR_VALUE=''
+    for reader in PlistBuddy plutil; do
+        if [ "$reader" = PlistBuddy ]; then
+            sr_probe "$id.$reader" "$title ($reader)" /usr/libexec/PlistBuddy -c "Print :$key" "$path" || return 1
+        else
+            sr_probe "$id.$reader" "$title ($reader fallback)" /usr/bin/plutil -extract "$key" raw -o - "$path" || return 1
+        fi
+        if [ "$SR_STATUS" = OK ]; then
+            SR_VALUE=$(sr_first_line)
+            if sr_os_value_valid "$key" "$SR_VALUE"; then
+                sr_field "$key" "$SR_VALUE"
+                return
+            fi
+            sr_record "$id.$reader.parse" 'Unexpected OS metadata format' UNKNOWN 0 0 || return 1
+            SR_VALUE=''
+        fi
+    done
+    sr_record "$id.unresolved" 'OS metadata unavailable from both readers' UNKNOWN 0 0
 }
 sr_trim() {
     local value=$1
@@ -150,13 +221,20 @@ sr_disk_fields() {
     fi
 }
 sr_space() {
-    local id=$1 source total used available percent rest found=false
-    while read -r source total used available percent rest; do
-        if [[ "$total" =~ ^[0-9]+$ ]] && [[ "$used" =~ ^[0-9]+$ ]] && [[ "$available" =~ ^[0-9]+$ ]]; then
-            sr_field '1024-byte blocks total / used / available' "$total / $used / $available"
-            sr_field 'Capacity used' "$percent"
-            found=true
-        fi
+    local id=$1 line found=false index fields=()
+    while IFS= read -r line || [ -n "$line" ]; do
+        read -r -a fields <<< "$line"
+        # Find the first capacity block after the filesystem, not a number-like
+        # suffix in a mount name. Filesystem names may themselves contain spaces.
+        for ((index=1; index + 4 < ${#fields[@]}; index++)); do
+            if [[ "${fields[index]}" =~ ^[0-9]+$ ]] && [[ "${fields[index+1]}" =~ ^[0-9]+$ ]] &&
+                [[ "${fields[index+2]}" =~ ^[0-9]+$ ]] && [[ "${fields[index+3]}" =~ ^[0-9]+%$ ]]; then
+                sr_field '1024-byte blocks total / used / available' "${fields[index]} / ${fields[index+1]} / ${fields[index+2]}"
+                sr_field 'Capacity used' "${fields[index+3]}"
+                found=true
+                break
+            fi
+        done
     done < "$SR_OUTPUT"
     if [ "$found" != true ]; then
         sr_field 'Space interpretation' UNKNOWN
@@ -164,22 +242,62 @@ sr_space() {
     fi
 }
 sr_os_file() {
-    local label=$1 root=$2 value path="$2/System/Library/CoreServices/SystemVersion.plist"
+    local label=$1 root=$2 path="$2/System/Library/CoreServices/SystemVersion.plist"
     [ ! -L "$root/System" ] && [ ! -L "$root/System/Library" ] &&
-        [ ! -L "$root/System/Library/CoreServices" ] && [ ! -L "$path" ] && [ -f "$path" ] || return 0
-    sr_probe "$label.version" 'Mounted installation OS version' /usr/libexec/PlistBuddy -c 'Print :ProductVersion' "$path" || return 1
+        [ ! -L "$root/System/Library/CoreServices" ] && [ ! -L "$path" ] && [ -f "$path" ] || {
+            sr_record "$label.metadata" 'No directly accessible installation version file at this mount' SKIPPED 0 0
+            sr_field 'Installation mount without version metadata' "$root"
+            return
+        }
+    sr_field 'Installation mount' "$root" || return 1
+    sr_plist_os_value "$label.version" 'Mounted installation OS version' ProductVersion "$path" || return 1
+    sr_plist_os_value "$label.build" 'Mounted installation OS build' ProductBuildVersion "$path"
+}
+
+sr_running_os() {
+    local key flag id title path=/System/Library/CoreServices/SystemVersion.plist
+    SR_RUNNING_VERSION=''
+    for key in ProductVersion ProductBuildVersion; do
+        case "$key" in
+            ProductVersion) flag=-productVersion; id=boot.os.version; title='Running OS version (Recovery when booted there)' ;;
+            ProductBuildVersion) flag=-buildVersion; id=boot.os.build; title='Running OS build' ;;
+        esac
+        sr_scalar "$id" "$title" /usr/bin/sw_vers "$flag" || return 1
+        if ! sr_os_value_valid "$key" "$SR_VALUE"; then
+            sr_record "$id.parse" 'sw_vers did not provide usable OS metadata; trying plist readers' UNKNOWN 0 0 || return 1
+            sr_plist_os_value "$id.fallback" "$title" "$key" "$path" || return 1
+        fi
+        [ "$key" != ProductVersion ] || SR_RUNNING_VERSION=$SR_VALUE
+    done
+}
+
+sr_root_policy() {
+    case "$SR_RUNNING_VERSION" in
+        10.*) sr_record security.seal 'Authenticated root policy does not apply to macOS 10.x' SKIPPED 0 0 ;;
+        *) sr_scalar security.seal 'Authenticated root policy' /usr/bin/csrutil authenticated-root status ;;
+    esac
+}
+
+sr_apfs_inventory() {
+    local line roles=0
+    case "$SR_RUNNING_VERSION" in
+        10.[0-9]|10.[0-9].*|10.1[0-2]|10.1[0-2].*)
+            sr_record storage.roles 'Legacy macOS: APFS role inventory omitted before 10.13' SKIPPED 0 0
+            return ;;
+    esac
+    sr_probe storage.roles 'APFS container role inventory (includes unmounted volumes)' /usr/sbin/diskutil apfs list || return 1
     if [ "$SR_STATUS" = OK ]; then
-        value=$(sr_first_line)
-        if [[ "$value" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then sr_field 'ProductVersion' "$value"
-        else sr_record "$label.version.parse" 'Unexpected OS version format' UNKNOWN 0 0; fi
+        while IFS= read -r line; do
+            case "$line" in *'APFS Volume Disk (Role):'*)
+                line=$(sr_trim "${line#*'APFS Volume Disk (Role):'}")
+                if [[ "$line" =~ ^disk[0-9]+s[0-9]+[[:space:]]+\([A-Za-z,[:space:]]+\)$ ]]; then
+                    sr_field 'APFS volume / role' "$line"
+                    roles=$((roles + 1))
+                fi ;;
+            esac
+        done < "$SR_OUTPUT"
+        if [ "$roles" -eq 0 ]; then sr_record storage.roles.parse 'No recognized APFS role entries' UNKNOWN 0 0; fi
     fi
-    sr_probe "$label.build" 'Mounted installation OS build' /usr/libexec/PlistBuddy -c 'Print :ProductBuildVersion' "$path" || return 1
-    if [ "$SR_STATUS" = OK ]; then
-        value=$(sr_first_line)
-        if [[ "$value" =~ ^[A-Za-z0-9.]{1,30}$ ]]; then sr_field 'ProductBuildVersion' "$value"
-        else sr_record "$label.build.parse" 'Unexpected OS build format' UNKNOWN 0 0; fi
-    fi
-    sr_field 'Installation mount' "$root"
 }
 sr_network() {
     local id=$1 url=$2 mode=$3 key value http_seen=false args=()
@@ -222,7 +340,7 @@ sr_find_volumes() {
 }
 
 sr_collect() {
-    local target=$1 network=$2 tool path index=0 line roles=0
+    local target=$1 network=$2 tool path index=0
     sr_field 'Report version' "$SYSTEM_REPORT_VERSION"
     sr_field 'Bash version' "$BASH_VERSION"
     sr_field 'Shell platform' "${OSTYPE:-unknown} / ${MACHTYPE:-unknown}"
@@ -230,14 +348,13 @@ sr_collect() {
     sr_field 'Selected target' "${target:-none; system-only report}"
     sr_field 'Network probes' "$network"
     sr_scalar clock.utc 'UTC clock' /bin/date -u '+%Y-%m-%dT%H:%M:%SZ' || return 1
-    sr_scalar boot.os.version 'Running OS version (Recovery when booted there)' /usr/bin/sw_vers -productVersion || return 1
-    sr_scalar boot.os.build 'Running OS build' /usr/bin/sw_vers -buildVersion || return 1
+    sr_running_os || return 1
     sr_scalar hardware.model 'Hardware model' /usr/sbin/sysctl -n hw.model || return 1
-    sr_scalar hardware.arch 'Kernel architecture' /usr/bin/uname -m || return 1
+    sr_platform || return 1
     sr_scalar hardware.cpu 'CPU description' /usr/sbin/sysctl -n machdep.cpu.brand_string || return 1
     sr_scalar hardware.memory 'Memory bytes' /usr/sbin/sysctl -n hw.memsize || return 1
     sr_scalar security.sip 'System Integrity Protection' /usr/bin/csrutil status || return 1
-    sr_scalar security.seal 'Authenticated root policy' /usr/bin/csrutil authenticated-root status || return 1
+    sr_root_policy || return 1
     for tool in /usr/sbin/diskutil /usr/libexec/PlistBuddy /usr/bin/plutil /usr/bin/curl \
         /usr/bin/openssl /usr/bin/shasum /usr/bin/mktemp /bin/df /bin/cp /bin/mkdir /bin/rm /bin/sleep; do
         if [ -x "$tool" ]; then sr_record "utility.${tool##*/}" "$tool executable" OK 0 0
@@ -258,19 +375,7 @@ sr_collect() {
             sr_record storage.target 'Selected target is not a mounted directory' UNKNOWN 2 0 || return 1
         fi
     fi
-    sr_probe storage.roles 'Mounted APFS role inventory' /usr/sbin/diskutil apfs list || return 1
-    if [ "$SR_STATUS" = OK ]; then
-        while IFS= read -r line; do
-            case "$line" in *'APFS Volume Disk (Role):'*)
-                line=$(sr_trim "${line#*'APFS Volume Disk (Role):'}")
-                if [[ "$line" =~ ^disk[0-9]+s[0-9]+[[:space:]]+\([A-Za-z,[:space:]]+\)$ ]]; then
-                    sr_field 'APFS volume / role' "$line"
-                    roles=$((roles + 1))
-                fi ;;
-            esac
-        done < "$SR_OUTPUT"
-        if [ "$roles" -eq 0 ]; then sr_record storage.roles.parse 'No recognized APFS role entries' UNKNOWN 0 0; fi
-    fi
+    sr_apfs_inventory || return 1
     sr_find_volumes
     for path in "${SR_VOLUMES[@]}"; do
         index=$((index + 1))
@@ -325,7 +430,7 @@ sr_choose() {
 system_report_main() {
     set +x
     umask 077
-    export PATH=/usr/bin:/bin:/usr/sbin:/sbin LC_ALL=C
+    export PATH=/usr/bin:/bin:/usr/sbin:/sbin LC_ALL=C SYSTEM_VERSION_COMPAT=0
     local target='' parent=/tmp network=yes interactive=false line list shown=0
     [ "$#" -ne 0 ] || interactive=true
     while [ "$#" -gt 0 ]; do
@@ -373,6 +478,8 @@ system_report_main() {
         printf 'macOS support report %s\n' "$SYSTEM_REPORT_VERSION"
         printf 'Probes: %s completed; %s failed/timed out; %s unavailable; %s unknown/skipped.\n' "$SR_OK" "$SR_FAILED" "$SR_UNAVAILABLE" "$SR_UNKNOWN"
         printf 'Unavailable or unsupported probes do not by themselves establish a fault.\n'
+        printf 'Running OS: %s; hardware family: %s; process architecture: %s.\n' "${SR_RUNNING_VERSION:-UNKNOWN}" "$SR_HARDWARE_FAMILY" "$SR_PROCESS_ARCH"
+        printf 'Compatibility evidence is in docs/SYSTEM-REPORT.md; probe completion is not OS certification.\n'
         for list in "$SR_WORK/findings" "$SR_WORK/notes"; do
             while IFS= read -r line; do
                 shown=$((shown + 1))

@@ -1,0 +1,59 @@
+name: Standalone report compatibility
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  report:
+    name: Report / ${{ matrix.os }} / ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            arch: arm64
+          - os: macos-15
+            arch: arm64
+          - os: macos-15-intel
+            arch: x86_64
+          - os: macos-26
+            arch: arm64
+          - os: macos-26-intel
+            arch: x86_64
+          - os: macos-latest
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Record and verify the actual test environment
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          /usr/bin/sw_vers
+          /usr/bin/uname -m
+          /bin/bash --version
+          test "$(/usr/bin/uname -m)" = "$EXPECTED_ARCH"
+      - name: Validate only the standalone report
+        run: |
+          /bin/bash -n system-report.sh
+          /bin/bash -n docs/report
+          cmp system-report.sh docs/report
+          python3 -m unittest discover -s tests -p test_system_report.py -v
+      - name: Collect a read-only report on the hosted macOS runner
+        run: |
+          /bin/bash system-report.sh --no-network --output-parent "$RUNNER_TEMP" > "$RUNNER_TEMP/report-path.txt"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          folder = Path((Path(os.environ['RUNNER_TEMP']) / 'report-path.txt').read_text().strip())
+          assert {p.name for p in folder.iterdir()} == {'summary.txt', 'report.txt', 'checks.tsv'}
+          assert 'INCOMPLETE' not in (folder / 'summary.txt').read_text()
+          assert 'boot.os.version\tOK\t0' in (folder / 'checks.tsv').read_text()
+          assert 'UNKNOWN' not in next(line for line in (folder / 'summary.txt').read_text().splitlines() if line.startswith('Running OS:'))
+          PY

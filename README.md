@@ -119,7 +119,7 @@ python3 -m unittest discover -s tests -v
 
 Python is needed only to run the tests on a development computer. The tool itself does not use it. Tests source the functions into a fixture process, replace the hardware/Directory Services boundaries, and write only to temporary directories. There is no production `--test-mode` flag that bypasses volume or Recovery checks.
 
-GitHub Actions runs these checks on `macos-14` and `macos-latest`. These hosted-runner checks do **not** exercise Recovery or prove MDM bypass compatibility.
+GitHub Actions runs these checks on `macos-14` and `macos-latest`. A separate standalone-report workflow tests only the read-only collector on explicit macOS 14/15/26 Apple silicon and macOS 15/26 Intel runners, plus `macos-latest`. See its [platform coverage and limits](docs/SYSTEM-REPORT.md#platform-coverage). These hosted-runner checks do **not** exercise Recovery or prove MDM bypass compatibility.
 
 See [DESIGN.md](docs/DESIGN.md) for the implementation boundaries and [TESTING.md](docs/TESTING.md) for device evidence requirements.
 
