@@ -32,11 +32,14 @@ def main():
                       launcher, flags=re.M)
     launcher = re.sub(r'^CORE_SHA=.*$', 'CORE_SHA=' + checksum, launcher, flags=re.M)
     diagnostic = launcher.split('\nrun_core() {', 1)[0] + '\n' + (ROOT / 'diagnostic.sh').read_text()
+    system_report = (ROOT / 'system-report.sh').read_text()
+    report_checksum = hashlib.sha256(system_report.encode()).hexdigest() + '  report\n'
     for relative, data in [('enrollment-lab.sh', core), ('launcher.sh', launcher),
                            ('docs/go', launcher), ('docs/go2', launcher), ('docs/go3', launcher),
                            ('docs/go4', launcher), ('docs/go5', launcher), ('docs/go6', launcher),
                            ('docs/go7', launcher), ('docs/go8', launcher),
-                           ('docs/check', diagnostic)]:
+                           ('docs/check', diagnostic), ('docs/report', system_report),
+                           ('docs/report.sha256', report_checksum)]:
         path = ROOT / relative
         if args.check:
             if path.read_text() != data:

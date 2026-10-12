@@ -5,3 +5,4 @@ test-results-private/
 *.original
 *.before
 *.after
+mac-support.*/

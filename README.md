@@ -30,6 +30,14 @@ Recovery builds without `openssl` or `shasum` use an embedded Bash-only SHA-256 
 
 For the next trial, use [v0.1.8-rc1](https://github.com/Sin-OP/mac-enrollment-lab/releases/tag/v0.1.8-rc1). The [deployment guide](docs/DEPLOYMENT.md) includes direct download and checksum verification in Recovery Terminal, as well as USB transfer. Backup storage must have ownership enforcement enabled. The second test Mac has not yet run this version; its outcome remains unknown.
 
+For a standalone, read-only **system support report**, run:
+
+```bash
+curl -4fL https://sin-op.github.io/mac-enrollment-lab/report -o /tmp/r && bash /tmp/r
+```
+
+Numbered prompts select a mounted volume and a place to save the report. It records hardware/OS versions, disk metadata, APFS roles, storage capacity, available Recovery utilities, and HTTPS connectivity. Each probe has a status, exit code, and duration; missing data stays unknown. The folder contains `summary.txt`, `report.txt`, and `checks.tsv`. Choose a persistent mounted drive to retain it through reboot. This independent collector does not run the enrollment experiment, inspect profile stores, or upload a report. See [the collection details and limits](docs/SYSTEM-REPORT.md).
+
 Download a specific Git commit or release on another computer, inspect the script, and copy the repository to an APFS-formatted USB drive. Keep that drive connected for the test. Avoid executing a changing branch directly over the network.
 
 The commands below use `/Volumes/LABUSB/mac-enrollment-lab` as the repository location. Substitute your actual paths. Mount/unlock the target Data volume in Disk Utility first; this script does not guess, rename, or unlock it.
