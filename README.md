@@ -127,4 +127,6 @@ See [DESIGN.md](docs/DESIGN.md) for the implementation boundaries and [TESTING.m
 
 This code was written from scratch after reviewing [assafdori/bypass-mdm](https://github.com/assafdori/bypass-mdm), [eudy97/MDM-bypass](https://github.com/eudy97/MDM-bypass), [mateussiqueira/unleash](https://github.com/mateussiqueira/unleash), and related scripts. The shared enrollment-marker/hosts technique is prior art. This implementation concentrates on explicit targets, narrow changes, error handling, and evidence rather than claiming a new exploit.
 
+A [GitLab source inventory](docs/GITLAB-REVIEW.md) distinguishes byte-identical copies from two other public script variants. Source differences alone do not justify a compatibility or persistence claim.
+
 MIT licensed. Experimental software; keep hardware test results tied to exact commits and OS builds.
