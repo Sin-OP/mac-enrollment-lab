@@ -297,6 +297,52 @@ load_backup
         self.write_plist(store / 'MDM_ComputerPrefs.plist', {'MDMServerHash': bytes(range(32))})
         return store
 
+    def make_three_file_profile_store(self):
+        store = self.settings.parent / 'Store'
+        store.mkdir(exist_ok=True)
+        (store / 'ConfigProfiles.binary').write_bytes(b'')
+        (store / 'Provisioning.binary').write_bytes(b'')
+        self.write_plist(store / 'MDM_ComputerPrefs.plist', {})
+        return store
+
+    def test_exact_three_file_empty_store_accepted_and_preserved(self):
+        store = self.make_three_file_profile_store()
+        for fmt in [plistlib.FMT_XML, plistlib.FMT_BINARY]:
+            with self.subTest(fmt=fmt):
+                (store / 'MDM_ComputerPrefs.plist').write_bytes(plistlib.dumps({}, fmt=fmt))
+                snapshot = self.capture()
+                r = self.run_bash('validate_fresh_install')
+                self.assert_ok(r)
+                self.assertIn('three-file pre-setup layout', r.stderr)
+                self.assertIn('Enrollment status remains UNKNOWN', r.stderr)
+                self.assertEqual(self.capture(), snapshot)
+        snapshot = self.capture()
+        r = self.run_bash('validate_fresh_install && apply_transaction && load_backup && restore_snapshot')
+        self.assert_ok(r)
+        self.assertEqual(self.capture(), snapshot)
+
+    def test_three_file_store_requires_empty_preferences(self):
+        store = self.make_three_file_profile_store()
+        self.write_plist(store / 'MDM_ComputerPrefs.plist', {'MDMServerHash': bytes(range(32))})
+        r = self.run_bash('validate_profile_store')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('Incomplete or unrecognized profile store', r.stderr)
+
+    def test_three_file_store_rejects_missing_or_extra_entries(self):
+        store = self.make_three_file_profile_store()
+        (store / 'Provisioning.binary').unlink()
+        self.assertNotEqual(self.run_bash('validate_profile_store').returncode, 0)
+        (store / 'Provisioning.binary').write_bytes(b'')
+        (store / '.extra').write_bytes(b'')
+        self.assertNotEqual(self.run_bash('validate_profile_store').returncode, 0)
+
+    def test_three_file_store_rejects_populated_database(self):
+        store = self.make_three_file_profile_store()
+        (store / 'ConfigProfiles.binary').write_bytes(b'profile payload')
+        r = self.run_bash('validate_profile_store')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('Nonempty profile database', r.stderr)
+
     def test_observed_store_accepted_with_unknown_enrollment_status(self):
         store = self.make_observed_profile_store()
         for fmt in [plistlib.FMT_XML, plistlib.FMT_BINARY]:

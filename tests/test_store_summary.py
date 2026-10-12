@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "docs/store"
+SCRIPT = ROOT / "docs/store2"
 
 
 @unittest.skipUnless(Path('/usr/libexec/PlistBuddy').exists(), 'macOS PlistBuddy')
@@ -67,6 +67,7 @@ class StoreSummaryTests(unittest.TestCase):
         result = self.inspect({})
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('Top-level type: empty dictionary', result.stdout)
+        self.assertIn('Expected plist/dictionary wrapper: yes', result.stdout)
         self.assertIn('Key count: 0', result.stdout)
         self.assertIn('MDMServerHash type: absent', result.stdout)
 

@@ -46,6 +46,8 @@ inspect_store() {
     esac
     printf 'Top-level type: %s\n' "$root"
     case "$compact" in
+        *'<plistversion="1.0"><dict/></plist>') printf 'Expected plist/dictionary wrapper: yes\n' ;;
+        *'<plistversion="1.0"><dict></dict></plist>') printf 'Expected plist/dictionary wrapper: yes\n' ;;
         *'<plistversion="1.0"><dict>'*'</dict></plist>') printf 'Expected plist/dictionary wrapper: yes\n' ;;
         *) printf 'Expected plist/dictionary wrapper: no\n' ;;
     esac

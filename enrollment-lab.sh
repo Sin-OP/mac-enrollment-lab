@@ -1,7 +1,7 @@
 #!/bin/bash
 # Original implementation. macOS ships Bash 3.2; do not use newer Bash features.
 
-VERSION=0.1.8-rc1
+VERSION=0.1.9-rc1
 TARGET=''
 BACKUP=''
 ADMIN=''
@@ -365,12 +365,18 @@ preferences_body() {
     printf '%s' "$body"
 }
 
+empty_preferences() {
+    local body LC_ALL=C
+    local empty_re='^[[:space:]]*<dict[[:space:]]*/>[[:space:]]*$|^[[:space:]]*<dict>[[:space:]]*</dict>[[:space:]]*$'
+    body=$(preferences_body "$1") || return 1
+    [[ "$body" =~ $empty_re ]]
+}
+
 recognized_preferences() {
     local body payload LC_ALL=C
-    local empty_re='^[[:space:]]*<dict[[:space:]]*/>[[:space:]]*$|^[[:space:]]*<dict>[[:space:]]*</dict>[[:space:]]*$'
     local hash_re='^[[:space:]]*<dict>[[:space:]]*<key>MDMServerHash</key>[[:space:]]*<data>([^<]+)</data>[[:space:]]*</dict>[[:space:]]*$'
     body=$(preferences_body "$1") || return 1
-    [[ "$body" =~ $empty_re ]] && return 0
+    empty_preferences "$1" && return 0
     [[ "$body" =~ $hash_re ]] || return 1
     payload=${BASH_REMATCH[1]//[[:space:]]/}
     [[ "$payload" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] && [ "$((${#payload} % 4))" -eq 0 ]
@@ -391,7 +397,7 @@ preferences_root_type() {
 }
 
 validate_profile_store() {
-    local store="$TARGET/private/var/db/ConfigurationProfiles/Store" entry name quoted_name count=0 markers=0 xml
+    local store="$TARGET/private/var/db/ConfigurationProfiles/Store" entry name quoted_name count=0 markers=0 xml empty_prefs=false
     [ ! -L "$store" ] || { fail 'Profile store symlink refused.'; return 1; }
     [ -e "$store" ] || return 0
     [ -d "$store" ] || { fail 'Profile store is not a directory.'; return 1; }
@@ -412,7 +418,8 @@ validate_profile_store() {
                 recognized_preferences "$xml" || {
                     fail "Unrecognized profile preferences ($(preferences_root_type "$xml")); enrollment status unknown."
                     return 1;
-                } ;;
+                }
+                if empty_preferences "$xml"; then empty_prefs=true; fi ;;
             *)
                 [[ "$name" =~ ^\.fl[a-fA-F0-9]{8}$ ]] && [ ! -s "$entry" ] || {
                     printf -v quoted_name '%q' "$name"
@@ -422,6 +429,13 @@ validate_profile_store() {
         esac
     done
     [ "$count" -ne 0 ] || return 0
+    if [ "$count" -eq 3 ] && [ "$markers" -eq 0 ] && [ "$empty_prefs" = true ] &&
+        [ -f "$store/ConfigProfiles.binary" ] && [ -f "$store/Provisioning.binary" ] &&
+        [ -f "$store/MDM_ComputerPrefs.plist" ]; then
+        log 'Profile store matches a narrow three-file pre-setup layout; all store files will be preserved.'
+        log 'Enrollment status remains UNKNOWN. This file-layout check is not proof of unenrollment.'
+        return 0
+    fi
     [ "$count" -eq 5 ] && [ "$markers" -eq 1 ] &&
         [ -f "$store/ConfigProfiles.binary" ] && [ -f "$store/Provisioning.binary" ] &&
         [ -f "$store/MCXPrivate.keychain" ] && [ -f "$store/MDM_ComputerPrefs.plist" ] || {

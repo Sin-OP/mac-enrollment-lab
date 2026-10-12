@@ -23,12 +23,12 @@ It does not rename volumes, disable SIP, alter the sealed system volume, install
 For manual typing in **Recovery Terminal**, use the guided launcher:
 
 ```bash
-curl -4fL https://sin-op.github.io/mac-enrollment-lab/go8 -o /tmp/l8 && /bin/bash /tmp/l8
+curl -4fL https://sin-op.github.io/mac-enrollment-lab/go9 -o /tmp/l9 && /bin/bash /tmp/l9
 ```
 
-Recovery builds without `openssl` or `shasum` use an embedded Bash-only SHA-256 fallback. The launcher downloads and verifies the pinned `v0.1.8-rc1` core, then presents numbered volume selections. Choose option 1 for a read-only preview. A passing preview stops there when you press Enter; type `Y` to continue to backup selection, then `APPLY` to make changes. Options 2 and 3 verify or restore. An appropriate separate backup volume is still required. The launcher reports the blocked stage and common download errors without printing plist values. Its checksum pins the core, not the launcher served by the project's public Pages endpoint.
+Recovery builds without `openssl` or `shasum` use an embedded Bash-only SHA-256 fallback. The launcher downloads and verifies the pinned `v0.1.9-rc1` core, then presents numbered volume selections. Choose option 1 for a read-only preview. A passing preview stops there when you press Enter; type `Y` to continue to backup selection, then `APPLY` to make changes. Options 2 and 3 verify or restore. An appropriate separate backup volume is still required. The launcher reports the blocked stage and common download errors without printing plist values. Its checksum pins the core, not the launcher served by the project's public Pages endpoint.
 
-For the next trial, use [v0.1.8-rc1](https://github.com/Sin-OP/mac-enrollment-lab/releases/tag/v0.1.8-rc1). The [deployment guide](docs/DEPLOYMENT.md) includes direct download and checksum verification in Recovery Terminal, as well as USB transfer. Backup storage must have ownership enforcement enabled. The second test Mac has not yet run this version; its outcome remains unknown.
+For the next trial, use [v0.1.9-rc1](https://github.com/Sin-OP/mac-enrollment-lab/releases/tag/v0.1.9-rc1). The [deployment guide](docs/DEPLOYMENT.md) includes direct download and checksum verification in Recovery Terminal, as well as USB transfer. Backup storage must have ownership enforcement enabled. The second test Mac has not yet run this version; its outcome remains unknown.
 
 For a standalone, read-only **system support report**, run:
 
@@ -106,7 +106,7 @@ Backups contain private local configuration and account membership information. 
 | Activation Lock, firmware/Recovery password | Not addressed |
 | Server-side organizational release | Not performed |
 
-The script checks APFS role metadata instead of localized volume names. It intentionally fails when required information is missing and reports the blocked stage. The profile-store guard accepts an absent/empty store or the narrow five-file post-reinstall layout with either a single nonempty `MDMServerHash` data key or an exactly empty preferences dictionary. A matching layout is not proof of unenrollment: enrollment status remains UNKNOWN. Nonempty profile databases, extra preferences, unexpected files, directories and symlinks are refused. No store file is modified or deleted. The empty-dictionary variant has fixture coverage but no hardware result yet. See [DESIGN.md](docs/DESIGN.md) for the exact criteria and limitations.
+The script checks APFS role metadata instead of localized volume names. It intentionally fails when required information is missing and reports the blocked stage. The profile-store guard accepts an absent/empty store, the narrow five-file post-reinstall layout, or an exact three-file layout with an empty preferences dictionary. A matching layout is not proof of unenrollment: enrollment status remains UNKNOWN. Nonempty profile databases, extra preferences, unexpected files, directories and symlinks are refused. No store file is modified or deleted. The three-file variant has fixture coverage but no hardware apply result yet. See [DESIGN.md](docs/DESIGN.md) for the exact criteria and limitations.
 
 Apple documents renewed enrollment enforcement on registered Macs running macOS 14 or later. A desktop login, failed query, or local `MDM enrollment: No` result is not proof of permanent removal. The organization can [release a device](https://support.apple.com/guide/apple-business-manager/release-devices-axmec4d28461/web); that server-side action is outside this tool.
 

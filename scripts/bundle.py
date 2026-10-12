@@ -37,7 +37,7 @@ def main():
     for relative, data in [('enrollment-lab.sh', core), ('launcher.sh', launcher),
                            ('docs/go', launcher), ('docs/go2', launcher), ('docs/go3', launcher),
                            ('docs/go4', launcher), ('docs/go5', launcher), ('docs/go6', launcher),
-                           ('docs/go7', launcher), ('docs/go8', launcher),
+                           ('docs/go7', launcher), ('docs/go8', launcher), ('docs/go9', launcher),
                            ('docs/check', diagnostic), ('docs/report', system_report),
                            ('docs/report.sha256', report_checksum)]:
         path = ROOT / relative
