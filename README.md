@@ -23,12 +23,12 @@ It does not rename volumes, disable SIP, alter the sealed system volume, install
 For manual typing in **Recovery Terminal**, use the guided launcher:
 
 ```bash
-curl -4fL https://sin-op.github.io/mac-enrollment-lab/go9 -o /tmp/l9 && /bin/bash /tmp/l9
+curl -4fL https://sin-op.github.io/mac-enrollment-lab/go10 -o /tmp/l10 && /bin/bash /tmp/l10
 ```
 
-Recovery builds without `openssl` or `shasum` use an embedded Bash-only SHA-256 fallback. The launcher downloads and verifies the pinned `v0.1.9-rc1` core, then presents numbered volume selections. Choose option 1 for a read-only preview. A passing preview stops there when you press Enter; type `Y` to continue to backup selection, then `APPLY` to make changes. Options 2 and 3 verify or restore. An appropriate separate backup volume is still required. The launcher reports the blocked stage and common download errors without printing plist values. Its checksum pins the core, not the launcher served by the project's public Pages endpoint.
+Recovery builds without `openssl` or `shasum` use an embedded Bash-only SHA-256 fallback. The launcher downloads and verifies the pinned `v0.1.10-rc1` core, then presents numbered volume selections. Choose option 1 for a read-only preview. A passing preview stops there when you press Enter; type `Y` to continue to backup selection, then `APPLY` to make changes. Options 2 and 3 verify or restore. An appropriate separate backup volume is still required. The launcher reports the blocked stage and common download errors without printing plist values. Its checksum pins the core, not the launcher served by the project's public Pages endpoint.
 
-For the next trial, use [v0.1.9-rc1](https://github.com/Sin-OP/mac-enrollment-lab/releases/tag/v0.1.9-rc1). The [deployment guide](docs/DEPLOYMENT.md) includes direct download and checksum verification in Recovery Terminal, as well as USB transfer. Backup storage must have ownership enforcement enabled. The second test Mac has not yet run this version; its outcome remains unknown.
+For the next trial, use [v0.1.10-rc1](https://github.com/Sin-OP/mac-enrollment-lab/releases/tag/v0.1.10-rc1). The [deployment guide](docs/DEPLOYMENT.md) includes direct download and checksum verification in Recovery Terminal, as well as USB transfer. Backup storage must have ownership enforcement enabled. This version removes a dependency on `dirname` and `basename` that stopped the previous Recovery apply before any target changes. Hardware application of this version remains unverified.
 
 For a standalone, read-only **system support report**, run:
 

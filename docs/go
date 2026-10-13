@@ -1,8 +1,8 @@
 #!/bin/bash
 # Interactive download launcher. The core release and checksum are fixed.
-CORE_VERSION=0.1.9-rc1
-CORE_URL=https://github.com/Sin-OP/mac-enrollment-lab/releases/download/v0.1.9-rc1/enrollment-lab.sh
-CORE_SHA=fc33cb90691ece6b28c59c4dfe3839609f5a7f0f59df7ffa0689ce3368f2a26f
+CORE_VERSION=0.1.10-rc1
+CORE_URL=https://github.com/Sin-OP/mac-enrollment-lab/releases/download/v0.1.10-rc1/enrollment-lab.sh
+CORE_SHA=85f942efa47ad2fd3842153b1ac5c59d89fd24232d4eab24657c32361242d646
 LAB_TMP=''
 CORE=''
 CHOICES=()
@@ -241,7 +241,7 @@ guided_apply() {
     say 'Stage: apply with backup and rollback checks.'
     run_core apply --data-volume "$target" --create-admin "$admin" --backup-dir "$backup" || {
         rc=$?
-        say "APPLY FAILED (exit $rc). Check the rollback result above before proceeding."
+        say "APPLY FAILED (exit $rc). Read the error and any rollback result above before proceeding."
         return "$rc"
     }
     say 'Apply completed. Verify local files with menu option 2 before reboot.'

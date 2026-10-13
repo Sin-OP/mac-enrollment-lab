@@ -1,7 +1,7 @@
 #!/bin/bash
 # Original implementation. macOS ships Bash 3.2; do not use newer Bash features.
 
-VERSION=0.1.9-rc1
+VERSION=0.1.10-rc1
 TARGET=''
 BACKUP=''
 ADMIN=''
@@ -196,7 +196,7 @@ require_plan_tools() {
 
 require_apply_tools() {
     local tool
-    for tool in /usr/bin/dscl /usr/bin/uuidgen /usr/bin/dirname /usr/bin/basename \
+    for tool in /usr/bin/dscl /usr/bin/uuidgen \
         /usr/sbin/chown /usr/bin/touch /bin/cp /bin/mv /bin/mkdir /bin/rm /bin/rmdir /bin/cat; do
         require_executable "$tool" || return 1
     done
@@ -534,8 +534,11 @@ prepare_backup() {
         fail 'Choose a new, nonexistent backup directory.'; return 1;
     }
     local parent base
-    parent=$(canonical_dir "$(/usr/bin/dirname "$BACKUP")") || { fail 'Backup parent must already exist.'; return 1; }
-    base=$(/usr/bin/basename "$BACKUP")
+    case "$BACKUP" in
+        */*) parent=${BACKUP%/*}; base=${BACKUP##*/}; [ -n "$parent" ] || parent=/ ;;
+        *) parent=.; base=$BACKUP ;;
+    esac
+    parent=$(canonical_dir "$parent") || { fail 'Backup parent must already exist.'; return 1; }
     case "$base" in ''|.|..) fail 'Invalid backup directory name.'; return 1 ;; esac
     BACKUP="$parent/$base"
     case "$BACKUP/" in "$TARGET/"*) fail 'Backup must be outside the target.'; return 1 ;; esac

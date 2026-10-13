@@ -27,6 +27,7 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual((ROOT / 'launcher.sh').read_bytes(), (ROOT / 'docs/go7').read_bytes())
         self.assertEqual((ROOT / 'launcher.sh').read_bytes(), (ROOT / 'docs/go8').read_bytes())
         self.assertEqual((ROOT / 'launcher.sh').read_bytes(), (ROOT / 'docs/go9').read_bytes())
+        self.assertEqual((ROOT / 'launcher.sh').read_bytes(), (ROOT / 'docs/go10').read_bytes())
 
     def test_recovery_platform_check_needs_no_uname_binary(self):
         self.assertNotIn('/usr/bin/uname', (ROOT / 'launcher.sh').read_text())

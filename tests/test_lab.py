@@ -126,6 +126,14 @@ build_paths
         self.assertEqual((self.backup / "3.original").read_bytes(), b"original hidden record\0")
         self.assertEqual(self.backup.stat().st_mode & 0o777, 0o700)
 
+    def test_backup_path_with_spaces_uses_existing_parent(self):
+        parent = self.root / "backup volume"
+        parent.mkdir()
+        backup = parent / "new snapshot"
+        r = self.run_bash(f"BACKUP={shlex.quote(str(backup))}; prepare_backup")
+        self.assert_ok(r)
+        self.assertEqual((backup / "state").read_text(), "snapshot-complete\n")
+
     def test_no_failure_is_reported_as_success(self):
         r = self.run_bash("write_markers() { return 23; }; apply_transaction", transaction_cleanup=True)
         self.assertNotEqual(r.returncode, 0)
@@ -168,6 +176,21 @@ apply_transaction
         self.assertIn('BLOCKED [A01]', r.stderr)
         self.assertFalse(self.backup.exists())
         self.assertEqual(self.capture(), self.before)
+
+    def test_apply_and_restore_without_dirname_or_basename(self):
+        r = self.run_bash('''
+require_executable() {
+    case "$1" in
+        /usr/bin/dirname|/usr/bin/basename)
+            fail "Unsupported utility requested: $1"; return 1 ;;
+    esac
+    [ -x "$1" ] || { fail "Required Recovery utility unavailable: $1"; return 1; }
+}
+validate_fresh_install && apply_transaction && load_backup && restore_snapshot
+''')
+        self.assert_ok(r)
+        self.assertEqual(self.capture(), self.before)
+        self.assertFalse((self.target / "Users/labadmin").exists())
 
     def test_main_checks_rollback_utility_before_creating_target_lock(self):
         r = self.run_bash('''
